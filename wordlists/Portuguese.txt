@@ -3927,11 +3927,8 @@ frango-d'agua-menor
 frangos-d'agua
 frangos-d'agua-azul
 frangos-d'agua-carijo
-frangos-d'agua-carijos
 frangos-d'agua-comum
-frangos-d'agua-comuns
 frangos-d'agua-menor
-frangos-d'agua-menores
 frankfurtiana
 frankfurtianas
 frankfurtiano

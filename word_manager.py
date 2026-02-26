@@ -55,7 +55,7 @@ class WordManager:
             if prompt in word_lower 
             and min_len <= len(word_lower) <= max_len
             and word_lower not in self.used_words
-            and (not exclude_chars or not any(c in word_lower for c in exclude_chars))
+            and (not exclude_chars or word_lower[0] not in exclude_chars)
         ]
 
         if not candidates:

@@ -192,27 +192,6 @@ async function resetWords() {
         await fetch('/api/reset', { method: 'POST' });
         document.getElementById('current-word').textContent = 'Words/File Reloaded!';
 
-        // Reset strategy to 'random'
-        const strategySelect = document.getElementById('strategy-select');
-        if (strategySelect) {
-            strategySelect.value = 'random';
-            currentConfig.strategy = 'random';
-        }
-
-        // Reset priority letters to empty
-        const priorityInput = document.getElementById('priority-input');
-        if (priorityInput) {
-            priorityInput.value = '';
-            currentConfig.priority_letters = '';
-        }
-
-        // Reset exclude letters to empty
-        const excludeInput = document.getElementById('exclude-input');
-        if (excludeInput) {
-            excludeInput.value = '';
-            currentConfig.exclude_letters = '';
-        }
-
         // Sync these changes back to the server
         syncConfigToBackend();
 
