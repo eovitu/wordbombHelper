@@ -1,0 +1,8 @@
+flask
+pyautogui
+keyboard
+pytesseract
+Pillow
+pynput
+opencv-python
+numpy
