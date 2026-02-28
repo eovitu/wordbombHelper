@@ -114,7 +114,7 @@ class Typer:
 
         for i, char in enumerate(word):
             # 1. Contextual Pauses (before punctuation or capitals inside a word)
-            if char in "'-_!?,." or (char.isupper() and i > 0):
+            if char in "'-_!?,." or (char.isupper() and i > 0 and word[i-1].islower()):
                 time.sleep(abs(random.gauss(0.2, 0.05)))
                 
             # Difficult letters slow down the specific keystroke

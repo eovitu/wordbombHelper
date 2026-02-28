@@ -49,17 +49,23 @@ class WordManager:
         # Prepare exclude set
         exclude_chars = set(exclude_letters.lower().replace(' ', '').replace(',', ''))
         
-        candidates = [
+        all_matches = [
             data['full'][i] 
             for i, word_lower in enumerate(data['lower'])
             if prompt in word_lower 
             and min_len <= len(word_lower) <= max_len
             and word_lower not in self.used_words
-            and (not exclude_chars or word_lower[0] not in exclude_chars)
         ]
 
-        if not candidates:
+        if not all_matches:
             return None
+
+        # Filter out exclude_chars from beginning of words, UNLESS it empties the list
+        if exclude_chars:
+            filtered = [w for w in all_matches if w.lower()[0] not in exclude_chars]
+            candidates = filtered if filtered else all_matches
+        else:
+            candidates = all_matches
 
         # Pre-filter: Priority Letters Filtering
         pri_chars = set(priority_letters.lower().replace(' ', '').replace(',', ''))
@@ -92,6 +98,11 @@ class WordManager:
             # Fallback to random if no hyphens
             return random.choice(candidates)
         elif strategy == 'alpha':
+            # Skip current character if it is in the excluded list
+            if exclude_chars and len(exclude_chars) < 26:
+                while self.current_alpha_char in exclude_chars:
+                    self._advance_alpha_char()
+            
             # Filter for words starting with current_alpha_char
             alpha_candidates = [w for w in candidates if w.lower().startswith(self.current_alpha_char)]
             
