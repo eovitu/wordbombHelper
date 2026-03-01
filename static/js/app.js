@@ -13,6 +13,8 @@ let currentConfig = {
     error_rate: 0,
     hesitation_prob: 0.05,
     retry_rate: 0,
+    late_error_rate: 0,
+    max_errors: 2,
     priority_letters: '',
     exclude_letters: ''
 };
@@ -48,6 +50,22 @@ function setupEventListeners() {
     retrySlider.addEventListener('input', (e) => {
         currentConfig.retry_rate = e.target.value / 100;
         retryValue.textContent = e.target.value;
+        syncConfigToBackend();
+    });
+
+    const lateErrorSlider = document.getElementById('late-error-slider');
+    const lateErrorValue = document.getElementById('late-error-value');
+    lateErrorSlider.addEventListener('input', (e) => {
+        currentConfig.late_error_rate = e.target.value / 100;
+        lateErrorValue.textContent = e.target.value;
+        syncConfigToBackend();
+    });
+
+    const maxErrorsSlider = document.getElementById('max-errors-slider');
+    const maxErrorsValue = document.getElementById('max-errors-value');
+    maxErrorsSlider.addEventListener('input', (e) => {
+        currentConfig.max_errors = parseInt(e.target.value);
+        maxErrorsValue.textContent = e.target.value;
         syncConfigToBackend();
     });
 
@@ -118,6 +136,8 @@ async function syncConfigToBackend() {
                 error_rate: currentConfig.error_rate,
                 hesitation_prob: currentConfig.hesitation_prob,
                 retry_rate: currentConfig.retry_rate,
+                late_error_rate: currentConfig.late_error_rate,
+                max_errors: currentConfig.max_errors,
                 priority_letters: currentConfig.priority_letters,
                 exclude_letters: currentConfig.exclude_letters
             })

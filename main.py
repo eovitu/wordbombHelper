@@ -24,6 +24,8 @@ autoplay_config = {
     'error_rate': 0.0,
     'hesitation_prob': 0.05,
     'retry_rate': 0.0,
+    'late_error_rate': 0.0,
+    'max_errors': 2,
     'priority_letters': '',
     'exclude_letters': ''
 }
@@ -69,7 +71,9 @@ def on_prompt_found(prompt_text):
             word, wpm, error_rate, 
             auto_tab=False, 
             hesitation_prob=autoplay_config['hesitation_prob'],
-            retry_rate=autoplay_config['retry_rate']
+            retry_rate=autoplay_config['retry_rate'],
+            late_error_rate=autoplay_config['late_error_rate'],
+            max_errors=autoplay_config['max_errors']
         )
         # Track last word typed to avoid "ghost prompt" hallucinations
         screen_reader.last_word_typed = word
@@ -120,14 +124,20 @@ def get_word():
         if auto_type:
             # Track last word typed even in manual mode
             screen_reader.last_word_typed = word
-            # Manual mode keeps Alt-Tab to switch focus to the game
-            # Added hesitation_prob and retry_rate
+            
+            # Use request data or fallback to synced global config
+            h_prob = float(data.get('hesitation_prob', autoplay_config['hesitation_prob']))
+            r_rate = float(data.get('retry_rate', autoplay_config['retry_rate']))
+            l_rate = float(data.get('late_error_rate', autoplay_config['late_error_rate']))
+            
             typer.type_word(
                 word, wpm, error_rate, 
                 auto_tab=True,
-                hesitation_prob=autoplay_config['hesitation_prob'],
-                retry_rate=autoplay_config['retry_rate'],
-                return_tab=True # Switch back to browser after manual typing
+                hesitation_prob=h_prob,
+                retry_rate=r_rate,
+                late_error_rate=l_rate,
+                max_errors=int(data.get('max_errors', autoplay_config['max_errors'])),
+                return_tab=True
             )
             
     return jsonify({'word': word})
@@ -201,6 +211,10 @@ def update_autoplay_config():
         autoplay_config['hesitation_prob'] = float(data['hesitation_prob'])
     if 'retry_rate' in data:
         autoplay_config['retry_rate'] = float(data['retry_rate'])
+    if 'late_error_rate' in data:
+        autoplay_config['late_error_rate'] = float(data['late_error_rate'])
+    if 'max_errors' in data:
+        autoplay_config['max_errors'] = int(data['max_errors'])
     if 'priority_letters' in data:
         autoplay_config['priority_letters'] = data['priority_letters']
     if 'exclude_letters' in data:
