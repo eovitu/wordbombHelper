@@ -28,9 +28,17 @@ class OverlayApp:
         self.root.withdraw()
         self._visible = False
         self._updating = False
+        self._check_signals()
+
+    def _check_signals(self):
+        # Allow Python to process signals like KeyboardInterrupt (Ctrl+C)
+        self.root.after(200, self._check_signals)
 
     def start(self):
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        except KeyboardInterrupt:
+            self.root.destroy()
 
     def show(self):
         """Show the overlay and start position updates."""

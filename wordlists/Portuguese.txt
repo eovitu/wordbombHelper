@@ -1216,7 +1216,7 @@ bootleg
 bootlegs
 bootstrapping
 bootstrappings
-boquejemos
+bosquejemos
 borboleta-azul-das-turfeiras
 borboleta-cauda-de-andorinha
 borboleta-rabo-de-andorinha
@@ -8397,9 +8397,7 @@ subsaarianas
 subsaariano
 subsaarianos
 subsaariiana
-subsaariianas
 subsaariiano
-subsaariianos
 subsariana
 subsarianas
 subsariano
