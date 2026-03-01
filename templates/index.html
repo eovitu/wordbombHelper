@@ -74,6 +74,22 @@
 
         <div id="config-tab" class="tab-content">
             <div class="card config-card">
+                <div class="preset-management">
+                    <div class="config-group">
+                        <label>Config Presets</label>
+                        <div class="preset-controls">
+                            <select id="preset-selector">
+                                <option value="" disabled selected>Select a preset...</option>
+                                <!-- Populated by JS -->
+                            </select>
+                            <button class="action-btn primary-btn preset-btn" onclick="saveNewPreset()">Save
+                                New</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-divider"></div>
+
                 <div class="config-group">
                     <label>Language</label>
                     <div class="language-selector" id="lang-selector">
@@ -125,9 +141,15 @@
                     <input type="range" id="late-error-slider" min="0" max="100" step="1" value="0">
                 </div>
 
-                <div class="config-group">
-                    <label>Max Erros (Palavra): <span id="max-errors-value">2</span></label>
-                    <input type="range" id="max-errors-slider" min="0" max="5" step="1" value="2">
+                <div class="config-group double-input">
+                    <div>
+                        <label>Max Erros (Typo): <span id="max-typos-value">2</span></label>
+                        <input type="range" id="max-typos-slider" min="0" max="5" step="1" value="2">
+                    </div>
+                    <div>
+                        <label>Max Erros (Late): <span id="max-late-value">1</span></label>
+                        <input type="range" id="max-late-slider" min="0" max="5" step="1" value="1">
+                    </div>
                 </div>
 
                 <div class="config-group double-input">

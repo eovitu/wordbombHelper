@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     fetchLanguages();
+    fetchPresets();
     setupEventListeners();
 });
 
@@ -14,7 +15,8 @@ let currentConfig = {
     hesitation_prob: 0.05,
     retry_rate: 0,
     late_error_rate: 0,
-    max_errors: 2,
+    max_typos: 2,
+    max_late_errors: 1,
     priority_letters: '',
     exclude_letters: ''
 };
@@ -61,11 +63,19 @@ function setupEventListeners() {
         syncConfigToBackend();
     });
 
-    const maxErrorsSlider = document.getElementById('max-errors-slider');
-    const maxErrorsValue = document.getElementById('max-errors-value');
-    maxErrorsSlider.addEventListener('input', (e) => {
-        currentConfig.max_errors = parseInt(e.target.value);
-        maxErrorsValue.textContent = e.target.value;
+    const maxTyposSlider = document.getElementById('max-typos-slider');
+    const maxTyposValue = document.getElementById('max-typos-value');
+    maxTyposSlider.addEventListener('input', (e) => {
+        currentConfig.max_typos = parseInt(e.target.value);
+        maxTyposValue.textContent = e.target.value;
+        syncConfigToBackend();
+    });
+
+    const maxLateSlider = document.getElementById('max-late-slider');
+    const maxLateValue = document.getElementById('max-late-value');
+    maxLateSlider.addEventListener('input', (e) => {
+        currentConfig.max_late_errors = parseInt(e.target.value);
+        maxLateValue.textContent = e.target.value;
         syncConfigToBackend();
     });
 
@@ -119,6 +129,108 @@ function setupEventListeners() {
 
     // Sync config on page load
     syncConfigToBackend();
+
+    // Preset Selector
+    const presetSelector = document.getElementById('preset-selector');
+    presetSelector.addEventListener('change', (e) => {
+        const name = e.target.value;
+        if (name) loadPreset(name);
+    });
+}
+
+let allPresets = {};
+
+async function fetchPresets() {
+    try {
+        const response = await fetch('/api/presets');
+        allPresets = await response.json();
+
+        const selector = document.getElementById('preset-selector');
+        // Clear except first
+        selector.innerHTML = '<option value="" disabled selected>Select a preset...</option>';
+
+        Object.keys(allPresets).forEach(name => {
+            const opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            selector.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to fetch presets', e);
+    }
+}
+
+function loadPreset(name) {
+    const preset = allPresets[name];
+    if (!preset) return;
+
+    // Update currentConfig
+    Object.assign(currentConfig, preset);
+
+    // Update UI Elements
+    updateUIFromConfig();
+
+    // Sync
+    syncConfigToBackend();
+    console.log(`Loaded preset: ${name}`);
+}
+
+function updateUIFromConfig() {
+    // Sliders & Values
+    document.getElementById('wpm-slider').value = currentConfig.wpm;
+    document.getElementById('wpm-value').textContent = currentConfig.wpm;
+
+    document.getElementById('error-slider').value = currentConfig.error_rate * 100;
+    document.getElementById('error-value').textContent = currentConfig.error_rate * 100;
+
+    document.getElementById('travadinha-slider').value = currentConfig.hesitation_prob * 100;
+    document.getElementById('travadinha-value').textContent = currentConfig.hesitation_prob * 100;
+
+    document.getElementById('retry-slider').value = currentConfig.retry_rate * 100;
+    document.getElementById('retry-value').textContent = (currentConfig.retry_rate * 100).toFixed(1);
+
+    document.getElementById('late-error-slider').value = currentConfig.late_error_rate * 100;
+    document.getElementById('late-error-value').textContent = currentConfig.late_error_rate * 100;
+
+    document.getElementById('max-typos-slider').value = currentConfig.max_typos;
+    document.getElementById('max-typos-value').textContent = currentConfig.max_typos;
+
+    document.getElementById('max-late-slider').value = currentConfig.max_late_errors;
+    document.getElementById('max-late-value').textContent = currentConfig.max_late_errors;
+
+    // Inputs & Selects
+    document.getElementById('strategy-select').value = currentConfig.strategy;
+}
+
+async function saveNewPreset() {
+    const name = prompt("Enter a name for this preset:");
+    if (!name) return;
+
+    const configToSave = {
+        wpm: currentConfig.wpm,
+        error_rate: currentConfig.error_rate,
+        hesitation_prob: currentConfig.hesitation_prob,
+        retry_rate: currentConfig.retry_rate,
+        late_error_rate: currentConfig.late_error_rate,
+        max_typos: currentConfig.max_typos,
+        max_late_errors: currentConfig.max_late_errors,
+        strategy: currentConfig.strategy
+    };
+
+    try {
+        const response = await fetch('/api/presets/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, config: configToSave })
+        });
+
+        if (response.ok) {
+            alert("Preset saved!");
+            fetchPresets();
+        }
+    } catch (e) {
+        console.error('Failed to save preset', e);
+    }
 }
 
 // --- Sync config to auto-play backend ---
@@ -137,7 +249,8 @@ async function syncConfigToBackend() {
                 hesitation_prob: currentConfig.hesitation_prob,
                 retry_rate: currentConfig.retry_rate,
                 late_error_rate: currentConfig.late_error_rate,
-                max_errors: currentConfig.max_errors,
+                max_typos: currentConfig.max_typos,
+                max_late_errors: currentConfig.max_late_errors,
                 priority_letters: currentConfig.priority_letters,
                 exclude_letters: currentConfig.exclude_letters
             })

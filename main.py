@@ -5,6 +5,7 @@ from typer import Typer
 from screen_reader import ScreenReader
 import threading
 import logging
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,7 +26,8 @@ autoplay_config = {
     'hesitation_prob': 0.05,
     'retry_rate': 0.0,
     'late_error_rate': 0.0,
-    'max_errors': 2,
+    'max_typos': 2,
+    'max_late_errors': 1,
     'priority_letters': '',
     'exclude_letters': ''
 }
@@ -73,7 +75,8 @@ def on_prompt_found(prompt_text):
             hesitation_prob=autoplay_config['hesitation_prob'],
             retry_rate=autoplay_config['retry_rate'],
             late_error_rate=autoplay_config['late_error_rate'],
-            max_errors=autoplay_config['max_errors']
+            max_typos=autoplay_config['max_typos'],
+            max_late_errors=autoplay_config['max_late_errors']
         )
         # Track last word typed to avoid "ghost prompt" hallucinations
         screen_reader.last_word_typed = word
@@ -136,7 +139,8 @@ def get_word():
                 hesitation_prob=h_prob,
                 retry_rate=r_rate,
                 late_error_rate=l_rate,
-                max_errors=int(data.get('max_errors', autoplay_config['max_errors'])),
+                max_typos=int(data.get('max_typos', autoplay_config['max_typos'])),
+                max_late_errors=int(data.get('max_late_errors', autoplay_config['max_late_errors'])),
                 return_tab=True
             )
             
@@ -213,8 +217,10 @@ def update_autoplay_config():
         autoplay_config['retry_rate'] = float(data['retry_rate'])
     if 'late_error_rate' in data:
         autoplay_config['late_error_rate'] = float(data['late_error_rate'])
-    if 'max_errors' in data:
-        autoplay_config['max_errors'] = int(data['max_errors'])
+    if 'max_typos' in data:
+        autoplay_config['max_typos'] = int(data['max_typos'])
+    if 'max_late_errors' in data:
+        autoplay_config['max_late_errors'] = int(data['max_late_errors'])
     if 'priority_letters' in data:
         autoplay_config['priority_letters'] = data['priority_letters']
     if 'exclude_letters' in data:
@@ -222,6 +228,60 @@ def update_autoplay_config():
     
     logger.info(f"Auto-Play config updated: {autoplay_config}")
     return jsonify({"status": "ok", "config": autoplay_config})
+
+# --- Preset Management ---
+
+PRESETS_FILE = os.path.join(os.path.dirname(__file__), 'presets.json')
+
+def load_presets():
+    if not os.path.exists(PRESETS_FILE):
+        return {}
+    try:
+        with open(PRESETS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading presets: {e}")
+        return {}
+
+def save_presets(presets):
+    try:
+        with open(PRESETS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(presets, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"Error saving presets: {e}")
+        return False
+
+@app.route('/api/presets', methods=['GET'])
+def get_presets():
+    return jsonify(load_presets())
+
+@app.route('/api/presets/save', methods=['POST'])
+def save_preset():
+    data = request.json
+    name = data.get('name')
+    config = data.get('config')
+    
+    if not name or not config:
+        return jsonify({"status": "error", "message": "Name and config required"}), 400
+        
+    presets = load_presets()
+    presets[name] = config
+    if save_presets(presets):
+        return jsonify({"status": "success"})
+    return jsonify({"status": "error", "message": "Failed to save file"}), 500
+
+@app.route('/api/presets/delete', methods=['POST'])
+def delete_preset():
+    data = request.json
+    name = data.get('name')
+    
+    presets = load_presets()
+    if name in presets:
+        del presets[name]
+        if save_presets(presets):
+            return jsonify({"status": "success"})
+    return jsonify({"status": "error", "message": "Preset not found or delete failed"}), 404
 
 def run_flask():
     app.run(debug=False, port=5000, use_reloader=False)

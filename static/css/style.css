@@ -566,3 +566,21 @@ input[type=number]:focus {
         flex-wrap: wrap;
     }
 }
+
+/* Presets */
+.preset-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.preset-btn {
+    width: auto;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+}
+
+.config-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 2rem 0;
+}

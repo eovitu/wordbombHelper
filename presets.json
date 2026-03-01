@@ -1,0 +1,12 @@
+{
+    "Vitu (Fav)": {
+        "wpm": 132,
+        "error_rate": 0.03,
+        "hesitation_prob": 0.0,
+        "retry_rate": 0.0,
+        "late_error_rate": 0.03,
+        "max_typos": 2,
+        "max_late_errors": 1,
+        "strategy": "random"
+    }
+}

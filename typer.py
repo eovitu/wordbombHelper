@@ -29,7 +29,7 @@ class Typer:
     def __init__(self):
         self.is_typing = False
 
-    def type_word(self, word, wpm=60, error_rate=0.0, auto_tab=True, hesitation_prob=0.05, retry_rate=0.0, late_error_rate=0.0, max_errors=2, return_tab=False):
+    def type_word(self, word, wpm=60, error_rate=0.0, auto_tab=True, hesitation_prob=0.05, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, return_tab=False):
         """
         Types the word simulating human typing.
         
@@ -40,7 +40,8 @@ class Typer:
         :param hesitation_prob: Probability of a mid-word pause ("travadinha").
         :param retry_rate: Probability of doing a "full retry" (simulating a bigger mistake).
         :param late_error_rate: Probability of making a mistake, typing 2-5 more chars, and then correcting.
-        :param max_errors: Maximum number of errors allowed per word.
+        :param max_typos: Maximum number of standard typos allowed per word.
+        :param max_late_errors: Maximum number of late mistakes allowed per word.
         :param return_tab: If True, performs Alt+Tab after typing.
         """
         if self.is_typing:
@@ -51,7 +52,8 @@ class Typer:
         kwargs = {
             'retry_rate': retry_rate,
             'late_error_rate': late_error_rate,
-            'max_errors': max_errors,
+            'max_typos': max_typos,
+            'max_late_errors': max_late_errors,
             'hesitation_prob': hesitation_prob,
             'return_tab': return_tab
         }
@@ -59,7 +61,7 @@ class Typer:
         t = threading.Thread(target=self._type_thread, args=(word, wpm, error_rate, auto_tab), kwargs=kwargs)
         t.start()
 
-    def _type_thread(self, word, wpm, error_rate, auto_tab, retry_rate=0.0, late_error_rate=0.0, max_errors=2, hesitation_prob=0.05, return_tab=False):
+    def _type_thread(self, word, wpm, error_rate, auto_tab, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, hesitation_prob=0.05, return_tab=False):
         try:
             if auto_tab:
                 # Alt + Tab to switch to the game window
@@ -90,7 +92,7 @@ class Typer:
                 pyautogui.press('enter')
 
             else:
-                self._human_type(word, wpm, error_rate, hesitation_prob, late_error_rate, max_errors)
+                self._human_type(word, wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
                 time.sleep(abs(random.gauss(0.1, 0.05)))
                 pyautogui.press('enter')
 
@@ -113,7 +115,7 @@ class Typer:
             return wrong_char.upper() if char.isupper() else wrong_char
         return char
 
-    def _human_type(self, word, wpm, error_rate, hesitation_prob=0.05, late_error_rate=0.0, max_errors=2):
+    def _human_type(self, word, wpm, error_rate, hesitation_prob=0.05, late_error_rate=0.0, max_typos=2, max_late_errors=1):
         chars_per_second = (wpm * 5) / 60
         base_delay = 1.0 / chars_per_second if chars_per_second > 0 else 0.1
 
@@ -122,7 +124,8 @@ class Typer:
         in_burst = False
         burst_chars_left = 0
         recovery_penalty = 0.0
-        errors_made = 0
+        typos_made = 0
+        late_errors_made = 0
         
         # Late mistake state
         late_mistake_active = False
@@ -169,32 +172,32 @@ class Typer:
             else:
                 # Normal speed drift (random walk to simulate variable finger speed)
                 drift = random.gauss(0, 0.15)
-                current_speed_modifier = max(0.7, min(1.5, current_speed_modifier + drift))
+                current_speed_modifier = float(max(0.7, min(1.5, float(current_speed_modifier) + drift)))
 
-            # 3. Handle Errors
-            if errors_made < max_errors and error_rate > 0 and random.random() < error_rate:
-                errors_made += 1
+            # 3. Handle Errors (Normal typos)
+            if typos_made < max_typos and error_rate > 0 and random.random() < error_rate:
+                typos_made += 1
                 wrong_char = self._get_typo_char(char)
                 keyboard.write(wrong_char)
                 
                 # Human reaction time to notice the error and press backspace
                 reaction_time = abs(random.gauss(0.25, 0.08))
                 time.sleep(max(0.1, reaction_time))
-                pyautogui.press('backspace')
+                keyboard.press_and_release('backspace')
                 
                 # Pause after deleting before typing the correct char
                 time.sleep(abs(random.gauss(0.15, 0.05)))
                 
                 # Add a recovery penalty for the next few chars (brain refocusing)
-                recovery_penalty = 0.35 # Adds 35% delay
+                recovery_penalty = 0.35 
                 in_burst = False # Errors break the typing burst
 
             # 4. Calculate final delay for this stroke
-            delay = base_delay * current_speed_modifier
+            delay = float(base_delay) * float(current_speed_modifier)
             if recovery_penalty > 0:
-                delay *= (1.0 + recovery_penalty)
+                delay *= (1.0 + float(recovery_penalty))
                 # Decay the penalty over subsequent characters
-                recovery_penalty = max(0.0, recovery_penalty - 0.15)
+                recovery_penalty = max(0.0, float(recovery_penalty) - 0.15)
             
             # Apply Gaussian variation for keystroke microscopic differences
             final_delay = abs(random.gauss(delay, delay * 0.25))
@@ -203,8 +206,8 @@ class Typer:
                 time.sleep(final_delay)
             
             # Trigger Late Mistake (only if not already in one and not at the very end)
-            if errors_made < max_errors and not late_mistake_active and late_error_rate > 0 and random.random() < late_error_rate and i < len(word) - 4:
-                errors_made += 1
+            if late_errors_made < max_late_errors and not late_mistake_active and late_error_rate > 0 and random.random() < late_error_rate and i < len(word) - 4:
+                late_errors_made += 1
                 late_mistake_active = True
                 mistake_index = i
                 mistake_chars_limit = random.randint(2, 5)
@@ -219,6 +222,7 @@ class Typer:
                 keyboard.write(char)
                 chars_typed_since_mistake += 1
                 
+                # If we reached the end of the mistake sequence or the word end
                 if chars_typed_since_mistake >= mistake_chars_limit or i == len(word) - 1:
                     # Time to realize and correct
                     time.sleep(abs(random.gauss(0.4, 0.1))) # Realization pause
@@ -226,16 +230,16 @@ class Typer:
                     # Backspace everything up to the mistake
                     to_delete = chars_typed_since_mistake + 1
                     for _ in range(to_delete):
-                        pyautogui.press('backspace')
-                        time.sleep(random.uniform(0.02, 0.06))
+                        keyboard.press_and_release('backspace')
+                        time.sleep(random.uniform(0.03, 0.07))
                     
-                    time.sleep(abs(random.gauss(0.2, 0.05))) # Pause after delete
+                    time.sleep(abs(random.gauss(0.3, 0.1))) # Extra safe pause after delete
                     
                     # Reset state and go back to the mistake index to type correctly
                     late_mistake_active = False
                     i = mistake_index
                     # Boost speed for correction
-                    current_speed_modifier *= 0.8
+                    current_speed_modifier = float(current_speed_modifier) * 0.8
                     continue
             else:
                 keyboard.write(char)
