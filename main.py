@@ -28,8 +28,14 @@ autoplay_config = {
     'late_error_rate': 0.0,
     'max_typos': 2,
     'max_late_errors': 1,
+    'priority_min_len': 1,
+    'priority_max_len': 46,
     'priority_letters': '',
-    'exclude_letters': ''
+    'exclude_letters': '',
+    'starts_with_letters': '',
+    'recover_target': 2,
+    'recover_exclude': '',
+    'priority_sublist': ''
 }
 
 # Store auto-play log messages for frontend polling
@@ -59,10 +65,24 @@ def on_prompt_found(prompt_text):
     strategy = autoplay_config['strategy']
     priority_letters = autoplay_config.get('priority_letters', '')
     exclude_letters = autoplay_config.get('exclude_letters', '')
+    starts_with_letters = autoplay_config.get('starts_with_letters', '')
+    priority_min_len = int(autoplay_config.get('priority_min_len', 1))
+    priority_max_len = int(autoplay_config.get('priority_max_len', 46))
     wpm = autoplay_config['wpm']
     error_rate = autoplay_config['error_rate']
     
-    word = wm.get_word(prompt_text, lang, min_len, max_len, strategy, priority_letters=priority_letters, exclude_letters=exclude_letters)
+    # Configure recovery logic before getting word
+    rec_target = int(autoplay_config.get('recover_target', 2))
+    rec_exclude = autoplay_config.get('recover_exclude', '')
+    wm.set_recover_config(rec_target, rec_exclude)
+    
+    word = wm.get_word(prompt_text, lang, min_len, max_len, strategy,
+                       priority_letters=priority_letters,
+                       exclude_letters=exclude_letters,
+                       starts_with_letters=starts_with_letters,
+                       priority_min_len=priority_min_len,
+                       priority_max_len=priority_max_len,
+                       priority_sublist=autoplay_config.get('priority_sublist', ''))
     if word:
         wm.mark_used(word)
         logger.info(f"Auto-Play: Typing word '{word}'")
@@ -106,6 +126,14 @@ def index():
 def get_languages():
     return jsonify(wm.get_languages())
 
+@app.route('/api/sublists')
+def get_sublists_map():
+    return jsonify(wm.get_sublists_map())
+
+@app.route('/api/sublists/<lang>')
+def get_sublists_for_lang(lang):
+    return jsonify(wm.get_sublists(lang))
+
 @app.route('/api/word', methods=['POST'])
 def get_word():
     data = request.json
@@ -116,11 +144,27 @@ def get_word():
     strategy = data.get('strategy', 'random')
     priority_letters = data.get('priority_letters', '')
     exclude_letters = data.get('exclude_letters', '')
+    starts_with_letters = data.get('starts_with_letters', '')
+    priority_min_len = int(data.get('priority_min_len', 1))
+    priority_max_len = int(data.get('priority_max_len', 46))
     auto_type = data.get('auto_type', False)
     wpm = int(data.get('wpm', 60))
     error_rate = float(data.get('error_rate', 0))
+    
+    priority_sublist = data.get('priority_sublist', '')
 
-    word = wm.get_word(prompt, lang, min_len, max_len, strategy, priority_letters=priority_letters, exclude_letters=exclude_letters)
+    # Configure recovery logic before getting word
+    rec_target = int(data.get('recover_target', 2))
+    rec_exclude = data.get('recover_exclude', '')
+    wm.set_recover_config(rec_target, rec_exclude)
+
+    word = wm.get_word(prompt, lang, min_len, max_len, strategy,
+                       priority_letters=priority_letters,
+                       exclude_letters=exclude_letters,
+                       starts_with_letters=starts_with_letters,
+                       priority_min_len=priority_min_len,
+                       priority_max_len=priority_max_len,
+                       priority_sublist=priority_sublist)
     
     if word:
         wm.mark_used(word)
@@ -221,10 +265,22 @@ def update_autoplay_config():
         autoplay_config['max_typos'] = int(data['max_typos'])
     if 'max_late_errors' in data:
         autoplay_config['max_late_errors'] = int(data['max_late_errors'])
+    if 'priority_min_len' in data:
+        autoplay_config['priority_min_len'] = int(data['priority_min_len'])
+    if 'priority_max_len' in data:
+        autoplay_config['priority_max_len'] = int(data['priority_max_len'])
     if 'priority_letters' in data:
         autoplay_config['priority_letters'] = data['priority_letters']
     if 'exclude_letters' in data:
         autoplay_config['exclude_letters'] = data['exclude_letters']
+    if 'starts_with_letters' in data:
+        autoplay_config['starts_with_letters'] = data['starts_with_letters']
+    if 'recover_target' in data:
+        autoplay_config['recover_target'] = int(data['recover_target'])
+    if 'recover_exclude' in data:
+        autoplay_config['recover_exclude'] = data['recover_exclude']
+    if 'priority_sublist' in data:
+        autoplay_config['priority_sublist'] = data['priority_sublist']
     
     logger.info(f"Auto-Play config updated: {autoplay_config}")
     return jsonify({"status": "ok", "config": autoplay_config})

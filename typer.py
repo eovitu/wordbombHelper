@@ -28,6 +28,15 @@ DIFFICULT_LETTERS = set('qwzxkyh')
 class Typer:
     def __init__(self):
         self.is_typing = False
+        self._abort = False
+        # Tecla de atalho global para cancelar a digitação
+        keyboard.on_press_key('insert', self._on_insert_pressed)
+
+    def _on_insert_pressed(self, e):
+        # A API de hook de teclado funciona no background. Se estivermos digitando, abortamos.
+        # Preferimos usar Insert ou Esc, pois o Backspace nós mesmos apertamos pra apagar erros!
+        if self.is_typing:
+            self._abort = True
 
     def type_word(self, word, wpm=60, error_rate=0.0, auto_tab=True, hesitation_prob=0.05, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, return_tab=False):
         """
@@ -62,6 +71,7 @@ class Typer:
         t.start()
 
     def _type_thread(self, word, wpm, error_rate, auto_tab, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, hesitation_prob=0.05, return_tab=False):
+        self._abort = False # Reseta a flag antes de começar a thread
         try:
             if auto_tab:
                 # Alt + Tab to switch to the game window
@@ -69,6 +79,8 @@ class Typer:
                 pyautogui.press('tab')
                 pyautogui.keyUp('alt')
                 time.sleep(0.15) # Slightly longer for focus stability
+            
+            if self._abort: return
 
             # Determine if we should do a "Full Retry"
             do_full_retry = False
@@ -78,8 +90,13 @@ class Typer:
             if do_full_retry:
                 wrong_word = self._make_typo(word)
                 self._human_type(wrong_word, wpm, error_rate, hesitation_prob)
+                
+                if self._abort: return
+                
                 time.sleep(abs(random.gauss(0.2, 0.05)))
                 pyautogui.press('enter')
+                
+                if self._abort: return
                 
                 # Human realization "oh shit, I typed wrong"
                 time.sleep(abs(random.gauss(0.8, 0.2)))
@@ -93,10 +110,13 @@ class Typer:
 
             else:
                 self._human_type(word, wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
+                
+                if self._abort: return
+                
                 time.sleep(abs(random.gauss(0.1, 0.05)))
                 pyautogui.press('enter')
 
-            if return_tab:
+            if return_tab and not self._abort:
                 # Alt + Tab to switch back to the manual interface (browser)
                 time.sleep(0.1)
                 pyautogui.keyDown('alt')
@@ -107,6 +127,7 @@ class Typer:
             print(f"Typing error: {e}")
         finally:
             self.is_typing = False
+            self._abort = False
 
     def _get_typo_char(self, char):
         c_lower = char.lower()
@@ -135,9 +156,12 @@ class Typer:
         
         i = 0
         while i < len(word):
+            if self._abort:
+                break
+                
             char = word[i]
             # 1. Contextual Pauses (before punctuation or capitals inside a word)
-            if char in "'-_!?,." or (char.isupper() and i > 0 and word[i-1].islower()):
+            if char in "'_" or (char.isupper() and i > 0 and word[i-1].islower()):
                 time.sleep(abs(random.gauss(0.2, 0.05)))
                 
             # Difficult letters slow down the specific keystroke

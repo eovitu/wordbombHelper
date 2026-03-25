@@ -8,6 +8,8 @@ let currentConfig = {
     lang: 'Portuguese',
     min_len: 1,
     max_len: 46,
+    priority_min_len: 1,
+    priority_max_len: 46,
     strategy: 'random',
     auto_type: false,
     wpm: 60,
@@ -18,7 +20,11 @@ let currentConfig = {
     max_typos: 2,
     max_late_errors: 1,
     priority_letters: '',
-    exclude_letters: ''
+    exclude_letters: '',
+    starts_with_letters: '',
+    recover_target: 2,
+    recover_exclude: '',
+    priority_sublist: ''
 };
 
 function setupEventListeners() {
@@ -80,14 +86,30 @@ function setupEventListeners() {
     });
 
     document.getElementById('min-len').addEventListener('change', (e) => {
-        currentConfig.min_len = parseInt(e.target.value);
+        currentConfig.min_len = parseInt(e.target.value) || 1;
         syncConfigToBackend();
     });
 
     document.getElementById('max-len').addEventListener('change', (e) => {
-        currentConfig.max_len = parseInt(e.target.value);
+        currentConfig.max_len = parseInt(e.target.value) || 46;
         syncConfigToBackend();
     });
+
+    const priMinLen = document.getElementById('priority-min-len');
+    if (priMinLen) {
+        priMinLen.addEventListener('change', (e) => {
+            currentConfig.priority_min_len = parseInt(e.target.value) || 1;
+            syncConfigToBackend();
+        });
+    }
+
+    const priMaxLen = document.getElementById('priority-max-len');
+    if (priMaxLen) {
+        priMaxLen.addEventListener('change', (e) => {
+            currentConfig.priority_max_len = parseInt(e.target.value) || 46;
+            syncConfigToBackend();
+        });
+    }
 
     document.getElementById('strategy-select').addEventListener('change', (e) => {
         currentConfig.strategy = e.target.value;
@@ -102,6 +124,14 @@ function setupEventListeners() {
         });
     }
 
+    const startsWithInput = document.getElementById('starts-with-input');
+    if (startsWithInput) {
+        startsWithInput.addEventListener('input', (e) => {
+            currentConfig.starts_with_letters = e.target.value;
+            syncConfigToBackend();
+        });
+    }
+
     const excludeInput = document.getElementById('exclude-input');
     if (excludeInput) {
         excludeInput.addEventListener('input', (e) => {
@@ -110,9 +140,33 @@ function setupEventListeners() {
         });
     }
 
+    const recoverTargetInput = document.getElementById('recover-target');
+    if (recoverTargetInput) {
+        recoverTargetInput.addEventListener('change', (e) => {
+            currentConfig.recover_target = parseInt(e.target.value) || 2;
+            syncConfigToBackend();
+        });
+    }
+
+    const recoverExcludeInput = document.getElementById('recover-exclude');
+    if (recoverExcludeInput) {
+        recoverExcludeInput.addEventListener('input', (e) => {
+            currentConfig.recover_exclude = e.target.value;
+            syncConfigToBackend();
+        });
+    }
+
     document.getElementById('auto-type-toggle').addEventListener('change', (e) => {
         currentConfig.auto_type = e.target.checked;
     });
+
+    const sublistSelect = document.getElementById('sublist-select');
+    if (sublistSelect) {
+        sublistSelect.addEventListener('change', (e) => {
+            currentConfig.priority_sublist = e.target.value;
+            syncConfigToBackend();
+        });
+    }
 
     // Game Input
     const promptInput = document.getElementById('prompt-input');
@@ -147,7 +201,7 @@ async function fetchPresets() {
 
         const selector = document.getElementById('preset-selector');
         // Clear except first
-        selector.innerHTML = '<option value="" disabled selected>Select a preset...</option>';
+        selector.innerHTML = '<option value="" disabled selected>Selecione um preset...</option>';
 
         Object.keys(allPresets).forEach(name => {
             const opt = document.createElement('option');
@@ -198,15 +252,40 @@ function updateUIFromConfig() {
     document.getElementById('max-late-slider').value = currentConfig.max_late_errors;
     document.getElementById('max-late-value').textContent = currentConfig.max_late_errors;
 
+    const minL = document.getElementById('min-len');
+    if (minL) minL.value = currentConfig.min_len || 1;
+
+    const maxL = document.getElementById('max-len');
+    if (maxL) maxL.value = currentConfig.max_len || 46;
+
+    const priMinL = document.getElementById('priority-min-len');
+    if (priMinL) priMinL.value = currentConfig.priority_min_len || 1;
+
+    const priMaxL = document.getElementById('priority-max-len');
+    if (priMaxL) priMaxL.value = currentConfig.priority_max_len || 46;
+
     // Inputs & Selects
     document.getElementById('strategy-select').value = currentConfig.strategy;
+
+    const recTarget = document.getElementById('recover-target');
+    if (recTarget) recTarget.value = currentConfig.recover_target || 2;
+
+    const recExclude = document.getElementById('recover-exclude');
+    if (recExclude) recExclude.value = currentConfig.recover_exclude || '';
+
+    // Reload sub-lists for the language in this preset
+    fetchSublistsForLang(currentConfig.lang);
 }
 
 async function saveNewPreset() {
-    const name = prompt("Enter a name for this preset:");
+    const name = prompt("Digite um nome para este preset:");
     if (!name) return;
 
     const configToSave = {
+        min_len: currentConfig.min_len,
+        max_len: currentConfig.max_len,
+        priority_min_len: currentConfig.priority_min_len || 1,
+        priority_max_len: currentConfig.priority_max_len || 46,
         wpm: currentConfig.wpm,
         error_rate: currentConfig.error_rate,
         hesitation_prob: currentConfig.hesitation_prob,
@@ -214,7 +293,13 @@ async function saveNewPreset() {
         late_error_rate: currentConfig.late_error_rate,
         max_typos: currentConfig.max_typos,
         max_late_errors: currentConfig.max_late_errors,
-        strategy: currentConfig.strategy
+        strategy: currentConfig.strategy,
+        priority_letters: currentConfig.priority_letters,
+        exclude_letters: currentConfig.exclude_letters,
+        starts_with_letters: currentConfig.starts_with_letters,
+        recover_target: currentConfig.recover_target,
+        recover_exclude: currentConfig.recover_exclude,
+        priority_sublist: currentConfig.priority_sublist
     };
 
     try {
@@ -225,11 +310,44 @@ async function saveNewPreset() {
         });
 
         if (response.ok) {
-            alert("Preset saved!");
+            alert("Preset salvo!");
             fetchPresets();
         }
     } catch (e) {
         console.error('Failed to save preset', e);
+    }
+}
+
+async function deletePreset() {
+    const selector = document.getElementById('preset-selector');
+    const name = selector.value;
+    if (!name) {
+        alert("Por favor, selecione um preset para remover.");
+        return;
+    }
+
+    if (!confirm(`Tem certeza de que deseja remover o preset "${name}"?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/presets/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+
+        if (response.ok) {
+            alert("Preset removido com sucesso!");
+            // Reset selector and fetch
+            selector.value = "";
+            fetchPresets();
+        } else {
+            const data = await response.json();
+            alert(data.message || "Falha ao remover o preset.");
+        }
+    } catch (e) {
+        console.error('Falha ao remover o preset', e);
     }
 }
 
@@ -243,6 +361,8 @@ async function syncConfigToBackend() {
                 lang: currentConfig.lang,
                 min_len: currentConfig.min_len,
                 max_len: currentConfig.max_len,
+                priority_min_len: currentConfig.priority_min_len,
+                priority_max_len: currentConfig.priority_max_len,
                 strategy: currentConfig.strategy,
                 wpm: currentConfig.wpm,
                 error_rate: currentConfig.error_rate,
@@ -252,7 +372,11 @@ async function syncConfigToBackend() {
                 max_typos: currentConfig.max_typos,
                 max_late_errors: currentConfig.max_late_errors,
                 priority_letters: currentConfig.priority_letters,
-                exclude_letters: currentConfig.exclude_letters
+                exclude_letters: currentConfig.exclude_letters,
+                starts_with_letters: currentConfig.starts_with_letters,
+                recover_target: currentConfig.recover_target,
+                recover_exclude: currentConfig.recover_exclude,
+                priority_sublist: currentConfig.priority_sublist
             })
         });
     } catch (e) {
@@ -275,17 +399,54 @@ async function fetchLanguages() {
             btn.onclick = () => setLanguage(lang, btn);
             container.appendChild(btn);
         });
+
+        // Load sub-lists for the current language on startup
+        await fetchSublistsForLang(currentConfig.lang);
     } catch (e) {
         console.error('Failed to fetch languages', e);
     }
 }
 
+async function fetchSublistsForLang(lang) {
+    try {
+        const response = await fetch(`/api/sublists/${encodeURIComponent(lang)}`);
+        const sublists = await response.json();
+
+        const group = document.getElementById('sublist-group');
+        const select = document.getElementById('sublist-select');
+
+        if (sublists.length === 0) {
+            group.style.display = 'none';
+            return;
+        }
+
+        // Show the group and populate the select
+        group.style.display = 'block';
+        select.innerHTML = '<option value="">Nenhuma (usar lista principal)</option>';
+        sublists.forEach(sub => {
+            const opt = document.createElement('option');
+            opt.value = sub;
+            // Capitalize nicely
+            opt.textContent = `🔹 ${sub.charAt(0).toUpperCase() + sub.slice(1)}`;
+            if (sub === currentConfig.priority_sublist) opt.selected = true;
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to fetch sublists', e);
+    }
+}
+
 function setLanguage(lang, btnElement) {
     currentConfig.lang = lang;
+    // Reset sub-list when switching language
+    currentConfig.priority_sublist = '';
 
     // Update UI
     document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
     btnElement.classList.add('active');
+
+    // Load sub-lists for new language
+    fetchSublistsForLang(lang);
 
     // Sync to auto-play backend
     syncConfigToBackend();
