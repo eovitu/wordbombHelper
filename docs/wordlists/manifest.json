@@ -1,0 +1,16 @@
+{
+    "wordlists": [
+        "Dutch",
+        "English",
+        "German",
+        "Italian",
+        "Portuguese",
+        "Spanish",
+        "Swedish",
+        "Turkish",
+        "jklm"
+    ],
+    "sublists": {
+        "Portuguese": ["palindromos"]
+    }
+}
