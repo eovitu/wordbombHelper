@@ -1,7 +1,7 @@
 {
-    "Perfect": {
+    "com erro": {
         "min_len": 1,
-        "max_len": 50,
+        "max_len": 46,
         "priority_min_len": 1,
         "priority_max_len": 28,
         "wpm": 137,
@@ -15,7 +15,28 @@
         "priority_letters": "",
         "exclude_letters": "",
         "starts_with_letters": "",
-        "recover_target": 1,
-        "recover_exclude": "w,k,y"
+        "recover_target": 2,
+        "recover_exclude": "",
+        "priority_sublist": ""
+    },
+    "sem erro": {
+        "min_len": 1,
+        "max_len": 46,
+        "priority_min_len": 1,
+        "priority_max_len": 28,
+        "wpm": 137,
+        "error_rate": 0.01,
+        "hesitation_prob": 0,
+        "retry_rate": 0,
+        "late_error_rate": 0.01,
+        "max_typos": 1,
+        "max_late_errors": 0,
+        "strategy": "random",
+        "priority_letters": "",
+        "exclude_letters": "",
+        "starts_with_letters": "",
+        "recover_target": 2,
+        "recover_exclude": "",
+        "priority_sublist": ""
     }
 }
