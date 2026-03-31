@@ -38,7 +38,7 @@ class Typer:
         if self.is_typing:
             self._abort = True
 
-    def type_word(self, word, wpm=60, error_rate=0.0, auto_tab=True, hesitation_prob=0.05, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, return_tab=False):
+    def type_word(self, word, wpm=60, error_rate=0.0, auto_tab=True, hesitation_prob=0.05, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, return_tab=False, delayed_type=False, add_period_prob=0.0):
         """
         Types the word simulating human typing.
         
@@ -52,6 +52,8 @@ class Typer:
         :param max_typos: Maximum number of standard typos allowed per word.
         :param max_late_errors: Maximum number of late mistakes allowed per word.
         :param return_tab: If True, performs Alt+Tab after typing.
+        :param delayed_type: If True, types noise, presses enter, waits, then types the word very fast.
+        :param add_period_prob: Probability of adding a period at the end of the word.
         """
         if self.is_typing:
             return
@@ -64,13 +66,15 @@ class Typer:
             'max_typos': max_typos,
             'max_late_errors': max_late_errors,
             'hesitation_prob': hesitation_prob,
-            'return_tab': return_tab
+            'return_tab': return_tab,
+            'delayed_type': delayed_type,
+            'add_period_prob': add_period_prob
         }
         
         t = threading.Thread(target=self._type_thread, args=(word, wpm, error_rate, auto_tab), kwargs=kwargs)
         t.start()
 
-    def _type_thread(self, word, wpm, error_rate, auto_tab, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, hesitation_prob=0.05, return_tab=False):
+    def _type_thread(self, word, wpm, error_rate, auto_tab, retry_rate=0.0, late_error_rate=0.0, max_typos=2, max_late_errors=1, hesitation_prob=0.05, return_tab=False, delayed_type=False, add_period_prob=0.0):
         self._abort = False # Reseta a flag antes de começar a thread
         try:
             if auto_tab:
@@ -82,39 +86,70 @@ class Typer:
             
             if self._abort: return
 
-            # Determine if we should do a "Full Retry"
-            do_full_retry = False
-            if retry_rate > 0 and random.random() < retry_rate:
-                 do_full_retry = True
+            # Add period at the end based on probability
+            if add_period_prob > 0 and random.random() < add_period_prob:
+                word += '.'
 
-            if do_full_retry:
-                wrong_word = self._make_typo(word)
-                self._human_type(wrong_word, wpm, error_rate, hesitation_prob)
+            if delayed_type:
+                # Spam noise for 0.5 to 1 second
+                spam_duration = random.uniform(0.5, 1.0)
+                spam_start = time.time()
+                while time.time() - spam_start < spam_duration:
+                    if self._abort: break
+                    noise_len = random.randint(1, 4)
+                    noise = "".join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(noise_len))
+                    
+                    # Moderate-speed burst of random characters (approx 400 WPM)
+                    keyboard.write(noise, delay=0.03)
+                    
+                    time.sleep(random.uniform(0.05, 0.1))
+                    pyautogui.press('enter')
+                    time.sleep(random.uniform(0.1, 0.15))
                 
                 if self._abort: return
                 
-                time.sleep(abs(random.gauss(0.2, 0.05)))
-                pyautogui.press('enter')
+                # Type the actual word slower than the configured WPM
+                slow_wpm = wpm * 0.75
+                self._human_type(word, slow_wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
                 
                 if self._abort: return
-                
-                # Human realization "oh shit, I typed wrong"
-                time.sleep(abs(random.gauss(0.8, 0.2)))
-                
-                # Retry faster and more careful
-                faster_wpm = wpm * random.uniform(1.2, 1.5)
-                lower_err = error_rate * 0.2
-                self._human_type(word, faster_wpm, lower_err, hesitation_prob * 0.5)
                 time.sleep(abs(random.gauss(0.1, 0.05)))
                 pyautogui.press('enter')
 
             else:
-                self._human_type(word, wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
-                
-                if self._abort: return
-                
-                time.sleep(abs(random.gauss(0.1, 0.05)))
-                pyautogui.press('enter')
+                # Determine if we should do a "Full Retry"
+                do_full_retry = False
+                if retry_rate > 0 and random.random() < retry_rate:
+                     do_full_retry = True
+
+                if do_full_retry:
+                    wrong_word = self._make_typo(word)
+                    self._human_type(wrong_word, wpm, error_rate, hesitation_prob)
+                    
+                    if self._abort: return
+                    
+                    time.sleep(abs(random.gauss(0.2, 0.05)))
+                    pyautogui.press('enter')
+                    
+                    if self._abort: return
+                    
+                    # Human realization "oh shit, I typed wrong"
+                    time.sleep(abs(random.gauss(0.8, 0.2)))
+                    
+                    # Retry faster and more careful
+                    faster_wpm = wpm * random.uniform(1.2, 1.5)
+                    lower_err = error_rate * 0.2
+                    self._human_type(word, faster_wpm, lower_err, hesitation_prob * 0.5)
+                    time.sleep(abs(random.gauss(0.1, 0.05)))
+                    pyautogui.press('enter')
+
+                else:
+                    self._human_type(word, wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
+                    
+                    if self._abort: return
+                    
+                    time.sleep(abs(random.gauss(0.1, 0.05)))
+                    pyautogui.press('enter')
 
             if return_tab and not self._abort:
                 # Alt + Tab to switch back to the manual interface (browser)
@@ -154,34 +189,38 @@ class Typer:
         chars_typed_since_mistake = 0
         mistake_chars_limit = 0
         
+        # Turbo Mode: If WPM is very high, we skip most "human-like" pauses to focus on speed
+        turbo = wpm >= 180
+        
         i = 0
         while i < len(word):
             if self._abort:
                 break
                 
             char = word[i]
-            # 1. Contextual Pauses (before punctuation or capitals inside a word)
-            if char in "'_" or (char.isupper() and i > 0 and word[i-1].islower()):
-                time.sleep(abs(random.gauss(0.2, 0.05)))
-                
-            # Difficult letters slow down the specific keystroke
-            if char.lower() in DIFFICULT_LETTERS:
-                time.sleep(abs(random.gauss(0.12, 0.04)))
-                in_burst = False # Break burst on difficult letters
+            if not turbo:
+                # 1. Contextual Pauses (before punctuation or capitals inside a word)
+                if char in "'_" or (char.isupper() and i > 0 and word[i-1].islower()):
+                    time.sleep(abs(random.gauss(0.2, 0.05)))
+                    
+                # Difficult letters slow down the specific keystroke
+                if char.lower() in DIFFICULT_LETTERS:
+                    time.sleep(abs(random.gauss(0.12, 0.04)))
+                    in_burst = False # Break burst on difficult letters
 
-            # Mute consonants (e.g. 'p' in 'hipnotizar', 'c' in 'hipocapnia')
-            if i < len(word) - 1:
-                c_lower = char.lower()
-                n_lower = word[i+1].lower()
-                if c_lower in "bcdfgkptv" and n_lower in "bcdfghjklmnpqrstvwxyz":
-                    if n_lower not in "rlh" and c_lower != n_lower:
-                        time.sleep(abs(random.gauss(0.15, 0.04)))
-                        in_burst = False
-            
-            # Mid-word hesitation / Loss of train of thought
-            if i > 0 and random.random() < hesitation_prob:
-                time.sleep(abs(random.gauss(0.6, 0.2)))
-                in_burst = False # Breaks the flow
+                # Mute consonants (e.g. 'p' in 'hipnotizar', 'c' in 'hipocapnia')
+                if i < len(word) - 1:
+                    c_lower = char.lower()
+                    n_lower = word[i+1].lower()
+                    if c_lower in "bcdfgkptv" and n_lower in "bcdfghjklmnpqrstvwxyz":
+                        if n_lower not in "rlh" and c_lower != n_lower:
+                            time.sleep(abs(random.gauss(0.15, 0.04)))
+                            in_burst = False
+                
+                # Mid-word hesitation / Loss of train of thought
+                if i > 0 and random.random() < hesitation_prob:
+                    time.sleep(abs(random.gauss(0.6, 0.2)))
+                    in_burst = False # Breaks the flow
 
             # 2. Burst Logic (Typing syllables/familiar patterns fast)
             if not in_burst and random.random() < 0.35: # 35% chance to start a fast cluster
@@ -224,9 +263,11 @@ class Typer:
                 recovery_penalty = max(0.0, float(recovery_penalty) - 0.15)
             
             # Apply Gaussian variation for keystroke microscopic differences
-            final_delay = abs(random.gauss(delay, delay * 0.25))
+            # If turbo, reduce the variation significantly
+            variation = delay * (0.05 if turbo else 0.25)
+            final_delay = abs(random.gauss(delay, variation))
             
-            if final_delay > 0.005:
+            if final_delay > 0.001:
                 time.sleep(final_delay)
             
             # Trigger Late Mistake (only if not already in one and not at the very end)

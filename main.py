@@ -35,7 +35,9 @@ autoplay_config = {
     'starts_with_letters': '',
     'recover_target': 2,
     'recover_exclude': '',
-    'priority_sublist': ''
+    'priority_sublist': '',
+    'delayed_type': False,
+    'add_period_prob': 0.0
 }
 
 # Store auto-play log messages for frontend polling
@@ -96,7 +98,9 @@ def on_prompt_found(prompt_text):
             retry_rate=autoplay_config['retry_rate'],
             late_error_rate=autoplay_config['late_error_rate'],
             max_typos=autoplay_config['max_typos'],
-            max_late_errors=autoplay_config['max_late_errors']
+            max_late_errors=autoplay_config['max_late_errors'],
+            delayed_type=autoplay_config.get('delayed_type', False),
+            add_period_prob=float(autoplay_config.get('add_period_prob', 0.0))
         )
         # Track last word typed to avoid "ghost prompt" hallucinations
         screen_reader.last_word_typed = word
@@ -185,7 +189,9 @@ def get_word():
                 late_error_rate=l_rate,
                 max_typos=int(data.get('max_typos', autoplay_config['max_typos'])),
                 max_late_errors=int(data.get('max_late_errors', autoplay_config['max_late_errors'])),
-                return_tab=True
+                return_tab=True,
+                delayed_type=data.get('delayed_type', autoplay_config.get('delayed_type', False)),
+                add_period_prob=float(data.get('add_period_prob', autoplay_config.get('add_period_prob', 0.0)))
             )
             
     return jsonify({'word': word})
@@ -281,6 +287,10 @@ def update_autoplay_config():
         autoplay_config['recover_exclude'] = data['recover_exclude']
     if 'priority_sublist' in data:
         autoplay_config['priority_sublist'] = data['priority_sublist']
+    if 'delayed_type' in data:
+        autoplay_config['delayed_type'] = bool(data['delayed_type'])
+    if 'add_period_prob' in data:
+        autoplay_config['add_period_prob'] = float(data['add_period_prob'])
     
     logger.info(f"Auto-Play config updated: {autoplay_config}")
     return jsonify({"status": "ok", "config": autoplay_config})

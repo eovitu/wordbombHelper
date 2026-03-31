@@ -24,7 +24,9 @@ let currentConfig = {
     starts_with_letters: '',
     recover_target: 2,
     recover_exclude: '',
-    priority_sublist: ''
+    priority_sublist: '',
+    delayed_type: false,
+    add_period_prob: 0.0
 };
 
 function setupEventListeners() {
@@ -168,6 +170,16 @@ function setupEventListeners() {
         });
     }
 
+    document.getElementById('delayed-type-toggle').addEventListener('change', (e) => {
+        currentConfig.delayed_type = e.target.checked;
+        syncConfigToBackend();
+    });
+
+    document.getElementById('period-toggle').addEventListener('change', (e) => {
+        currentConfig.add_period_prob = e.target.checked ? 0.99 : 0.0;
+        syncConfigToBackend();
+    });
+
     // Game Input
     const promptInput = document.getElementById('prompt-input');
     promptInput.addEventListener('keydown', (e) => {
@@ -273,6 +285,11 @@ function updateUIFromConfig() {
     const recExclude = document.getElementById('recover-exclude');
     if (recExclude) recExclude.value = currentConfig.recover_exclude || '';
 
+    // Toggles
+    document.getElementById('delayed-type-toggle').checked = currentConfig.delayed_type || false;
+    document.getElementById('period-toggle').checked = (currentConfig.add_period_prob > 0);
+    document.getElementById('auto-type-toggle').checked = currentConfig.auto_type || false;
+
     // Reload sub-lists for the language in this preset
     fetchSublistsForLang(currentConfig.lang);
 }
@@ -299,7 +316,9 @@ async function saveNewPreset() {
         starts_with_letters: currentConfig.starts_with_letters,
         recover_target: currentConfig.recover_target,
         recover_exclude: currentConfig.recover_exclude,
-        priority_sublist: currentConfig.priority_sublist
+        priority_sublist: currentConfig.priority_sublist,
+        delayed_type: currentConfig.delayed_type,
+        add_period_prob: currentConfig.add_period_prob
     };
 
     try {
@@ -376,7 +395,9 @@ async function syncConfigToBackend() {
                 starts_with_letters: currentConfig.starts_with_letters,
                 recover_target: currentConfig.recover_target,
                 recover_exclude: currentConfig.recover_exclude,
-                priority_sublist: currentConfig.priority_sublist
+                priority_sublist: currentConfig.priority_sublist,
+                delayed_type: currentConfig.delayed_type,
+                add_period_prob: currentConfig.add_period_prob
             })
         });
     } catch (e) {

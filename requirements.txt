@@ -6,3 +6,4 @@ Pillow
 pynput
 opencv-python
 numpy
+mss

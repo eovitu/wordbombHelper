@@ -1,6 +1,7 @@
 import time
 import threading
-import pyautogui
+import mss
+import mss.tools
 from PIL import Image
 import pytesseract
 import logging
@@ -64,8 +65,11 @@ class ScreenReader:
         self.debug_screenshots_dir = os.path.join(os.getcwd(), "debug_screenshots")
         if not os.path.exists(self.debug_screenshots_dir):
             os.makedirs(self.debug_screenshots_dir)
-        self.save_debug_screenshots = True
+        self.save_debug_screenshots = False
         self.last_word_typed = ""
+        
+        # Initialize mss
+        self.sct = mss.mss()
 
     def set_callback(self, callback):
         self.callback_found_word = callback
@@ -207,20 +211,22 @@ class ScreenReader:
         if not self.prompt_region:
             return None, None, False
 
-        region_tuple = (
-            self.prompt_region['x1'], self.prompt_region['y1'],
-            self.prompt_region['width'], self.prompt_region['height']
-        )
+        monitor = {
+            "top": self.prompt_region['y1'],
+            "left": self.prompt_region['x1'],
+            "width": self.prompt_region['width'],
+            "height": self.prompt_region['height']
+        }
         
-        # Capture
-        pil_img = pyautogui.screenshot(region=region_tuple)
+        # Capture using mss (much faster than pyautogui)
+        sct_img = self.sct.grab(monitor)
+        # Convert to numpy array (mss returns BGRA)
+        img_bgr = np.array(sct_img)
+        img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
         
-        # Convert to OpenCV (BGR)
-        img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-        
-        # Upscale for better OCR
+        # Upscale for better OCR (2x is enough for performance)
         h, w = img_bgr.shape[:2]
-        img_large = cv2.resize(img_bgr, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
+        img_large = cv2.resize(img_bgr, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
 
         # 1. TURN DETECTION (Full Image Analysis)
         hsv_full = cv2.cvtColor(img_large, cv2.COLOR_BGR2HSV)
@@ -370,13 +376,13 @@ class ScreenReader:
                 # === CORE LOGIC ===
                 # Only act if "SUA VEZ" is detected
                 if not is_my_turn:
-                    time.sleep(0.3)  # Slower poll when not our turn to save CPU
+                    time.sleep(0.1)  # Faster poll when not our turn
                     continue
                 
                 # It IS our turn. Extract the prompt.
                 if not prompt_text or len(prompt_text) < 1:
                     # SUA VEZ is showing but we can't read the prompt clearly
-                    time.sleep(0.15)
+                    time.sleep(0.1)
                     continue
 
                 self._log(f"SUA VEZ detected! Prompt: '{prompt_text}'")
@@ -394,7 +400,7 @@ class ScreenReader:
                         break
                     
                     # Wait for typing to finish + game to process
-                    time.sleep(1.0)
+                    time.sleep(0.4)
                     
                     # Re-check: is "SUA VEZ" still showing? Also re-read prompt
                     _, new_prompt, still_my_turn = self._capture_and_ocr()
@@ -431,7 +437,14 @@ class ScreenReader:
                   self.turn_region['width'], self.turn_region['height'])
         
         try:
-            img = pyautogui.screenshot(region=region)
+            monitor = {
+                "top": self.turn_region['y1'],
+                "left": self.turn_region['x1'],
+                "width": self.turn_region['width'],
+                "height": self.turn_region['height']
+            }
+            sct_img = self.sct.grab(monitor)
+            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
             img = img.convert('L')
             text = pytesseract.image_to_string(img, config='--psm 6').lower()
             return "turn" in text or "vez" in text
@@ -446,7 +459,14 @@ class ScreenReader:
                   self.prompt_region['width'], self.prompt_region['height'])
                   
         try:
-            img = pyautogui.screenshot(region=region)
+            monitor = {
+                "top": self.prompt_region['y1'],
+                "left": self.prompt_region['x1'],
+                "width": self.prompt_region['width'],
+                "height": self.prompt_region['height']
+            }
+            sct_img = self.sct.grab(monitor)
+            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
             img = img.convert('L')
             text = pytesseract.image_to_string(img, config='--psm 6').strip()
             
