@@ -136,10 +136,18 @@ class Typer:
                     # Human realization "oh shit, I typed wrong"
                     time.sleep(abs(random.gauss(0.8, 0.2)))
                     
+                    # Clear input field (Ctrl+A + Backspace) before retry
+                    pyautogui.keyDown('ctrl')
+                    pyautogui.press('a')
+                    pyautogui.keyUp('ctrl')
+                    time.sleep(0.05)
+                    pyautogui.press('backspace')
+                    time.sleep(0.12)
+                    
                     # Retry faster and more careful
                     faster_wpm = wpm * random.uniform(1.2, 1.5)
                     lower_err = error_rate * 0.2
-                    self._human_type(word, faster_wpm, lower_err, hesitation_prob * 0.5)
+                    self._human_type(word, faster_wpm, lower_err, hesitation_prob * 0.5, late_error_rate=0.0, max_typos=1, max_late_errors=0)
                     time.sleep(abs(random.gauss(0.1, 0.05)))
                     pyautogui.press('enter')
 
@@ -198,8 +206,10 @@ class Typer:
                 break
                 
             char = word[i]
+            
+            # --- 1. PRE-KEYSTROKE TIMING & CONTEXT ---
             if not turbo:
-                # 1. Contextual Pauses (before punctuation or capitals inside a word)
+                # Contextual Pauses (before punctuation or capitals inside a word)
                 if char in "'_" or (char.isupper() and i > 0 and word[i-1].islower()):
                     time.sleep(abs(random.gauss(0.2, 0.05)))
                     
@@ -208,11 +218,11 @@ class Typer:
                     time.sleep(abs(random.gauss(0.12, 0.04)))
                     in_burst = False # Break burst on difficult letters
 
-                # Mute consonants (e.g. 'p' in 'hipnotizar', 'c' in 'hipocapnia')
+                # Mute consonants
                 if i < len(word) - 1:
                     c_lower = char.lower()
                     n_lower = word[i+1].lower()
-                    if c_lower in "bcdfgkptv" and n_lower in "bcdfghjklmnpqrstvwxyz":
+                    if n_lower and c_lower in "bcdfgkptv" and n_lower in "bcdfghjklmnpqrstvwxyz":
                         if n_lower not in "rlh" and c_lower != n_lower:
                             time.sleep(abs(random.gauss(0.15, 0.04)))
                             in_burst = False
@@ -220,58 +230,58 @@ class Typer:
                 # Mid-word hesitation / Loss of train of thought
                 if i > 0 and random.random() < hesitation_prob:
                     time.sleep(abs(random.gauss(0.6, 0.2)))
-                    in_burst = False # Breaks the flow
+                    in_burst = False
 
-            # 2. Burst Logic (Typing syllables/familiar patterns fast)
-            if not in_burst and random.random() < 0.35: # 35% chance to start a fast cluster
+            # --- 2. BURST & SPEED CALCULATION ---
+            if not in_burst and random.random() < 0.35: 
                 in_burst = True
                 burst_chars_left = random.randint(2, 5)
-                current_speed_modifier = random.uniform(0.6, 0.85) # Faster typing speed
+                current_speed_modifier = random.uniform(0.6, 0.85) 
             elif in_burst:
                 burst_chars_left -= 1
                 if burst_chars_left <= 0:
                     in_burst = False
-                    current_speed_modifier = random.uniform(1.0, 1.3) # Slower transition after burst
+                    current_speed_modifier = random.uniform(1.0, 1.3)
             else:
-                # Normal speed drift (random walk to simulate variable finger speed)
                 drift = random.gauss(0, 0.15)
                 current_speed_modifier = float(max(0.7, min(1.5, float(current_speed_modifier) + drift)))
 
-            # 3. Handle Errors (Normal typos)
-            if typos_made < max_typos and error_rate > 0 and random.random() < error_rate:
+            # Calculate final delay for this stroke
+            delay = float(base_delay) * float(current_speed_modifier)
+            if recovery_penalty > 0:
+                delay *= (1.0 + float(recovery_penalty))
+                recovery_penalty = max(0.0, float(recovery_penalty) - 0.15)
+            
+            variation = delay * (0.05 if turbo else 0.25)
+            final_delay = abs(random.gauss(delay, variation))
+
+            # --- 3. ERROR LOGIC & KEYSTROKE ---
+            
+            # 3.1 Normal Typo Correction (Immediate)
+            # Only trigger Standard Typo if NOT in a Late Mistake to avoid chaos
+            if not late_mistake_active and typos_made < max_typos and error_rate > 0 and random.random() < error_rate:
                 typos_made += 1
                 wrong_char = self._get_typo_char(char)
                 keyboard.write(wrong_char)
                 
-                # Human reaction time to notice the error and press backspace
-                reaction_time = abs(random.gauss(0.25, 0.08))
-                time.sleep(max(0.1, reaction_time))
+                # Realization pause
+                time.sleep(max(0.12, abs(random.gauss(0.28, 0.08))))
                 keyboard.press_and_release('backspace')
                 
-                # Pause after deleting before typing the correct char
-                time.sleep(abs(random.gauss(0.15, 0.05)))
+                # Recovery pause
+                time.sleep(abs(random.gauss(0.18, 0.05)))
+                recovery_penalty = 0.35
+                in_burst = False
                 
-                # Add a recovery penalty for the next few chars (brain refocusing)
-                recovery_penalty = 0.35 
-                in_burst = False # Errors break the typing burst
+                # IMPORTANT: DO NOT increment i. Continue to redo the iteration and type the CORRECT character.
+                continue
 
-            # 4. Calculate final delay for this stroke
-            delay = float(base_delay) * float(current_speed_modifier)
-            if recovery_penalty > 0:
-                delay *= (1.0 + float(recovery_penalty))
-                # Decay the penalty over subsequent characters
-                recovery_penalty = max(0.0, float(recovery_penalty) - 0.15)
-            
-            # Apply Gaussian variation for keystroke microscopic differences
-            # If turbo, reduce the variation significantly
-            variation = delay * (0.05 if turbo else 0.25)
-            final_delay = abs(random.gauss(delay, variation))
-            
-            if final_delay > 0.001:
-                time.sleep(final_delay)
-            
-            # Trigger Late Mistake (only if not already in one and not at the very end)
-            if late_errors_made < max_late_errors and not late_mistake_active and late_error_rate > 0 and random.random() < late_error_rate and i < len(word) - 4:
+            # 3.2 Late Mistake Trigger
+            # Only trigger a Late Mistake if NOT already in one, and NOT currently doing a Normal Typo fix
+            # Also don't trigger too close to the end.
+            elif not late_mistake_active and late_errors_made < max_late_errors and late_error_rate > 0 and \
+               random.random() < late_error_rate and i < len(word) - 4:
+                
                 late_errors_made += 1
                 late_mistake_active = True
                 mistake_index = i
@@ -280,34 +290,41 @@ class Typer:
                 
                 wrong_char = self._get_typo_char(char)
                 keyboard.write(wrong_char)
+                
+                if final_delay > 0.001:
+                    time.sleep(final_delay)
+                
                 i += 1
-                continue
+                continue # Skip normal typing for this index as we just typed the wrong char
 
+            # 3.3 Keystroke Execution (Normal or Late Mistake Phase)
             if late_mistake_active:
                 keyboard.write(char)
                 chars_typed_since_mistake += 1
                 
-                # If we reached the end of the mistake sequence or the word end
+                if final_delay > 0.001:
+                    time.sleep(final_delay)
+                
+                # Correction Logic: "Oh, wait, I messed up back there"
                 if chars_typed_since_mistake >= mistake_chars_limit or i == len(word) - 1:
-                    # Time to realize and correct
-                    time.sleep(abs(random.gauss(0.4, 0.1))) # Realization pause
+                    time.sleep(abs(random.gauss(0.45, 0.12))) # Realization pause
                     
-                    # Backspace everything up to the mistake
                     to_delete = chars_typed_since_mistake + 1
                     for _ in range(to_delete):
                         keyboard.press_and_release('backspace')
-                        time.sleep(random.uniform(0.03, 0.07))
+                        time.sleep(random.uniform(0.04, 0.08))
                     
-                    time.sleep(abs(random.gauss(0.3, 0.1))) # Extra safe pause after delete
+                    time.sleep(abs(random.gauss(0.3, 0.1))) # Safety pause
                     
-                    # Reset state and go back to the mistake index to type correctly
                     late_mistake_active = False
-                    i = mistake_index
-                    # Boost speed for correction
-                    current_speed_modifier = float(current_speed_modifier) * 0.8
+                    i = mistake_index # Reset to the mistake index to type it correctly
+                    current_speed_modifier = float(current_speed_modifier) * 0.75 # Small speed boost to "catch up"
                     continue
             else:
+                # Normal Keystroke
                 keyboard.write(char)
+                if final_delay > 0.001:
+                    time.sleep(final_delay)
             
             i += 1
 

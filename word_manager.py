@@ -67,9 +67,9 @@ class WordManager:
         """Returns available sub-list names for the given language."""
         return list(self.sublists.get(lang, {}).keys())
 
-    def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist=''):
+    def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix=''):
         """
-        Finds a word containing the prompt string.
+        Finds a word containing the prompt string or starting with a prefix.
         
         strategies: 'random', 'shortest', 'longest', 'hyphen', 'alpha', 'recover'
         """
@@ -92,29 +92,37 @@ class WordManager:
                 # Found in sub-list — use it directly (skip all other filters for simplicity)
                 return random.choice(sub_matches)
 
-        # Optimize search using pre-lowercased list and list comprehension
+        # Define filter parameters early to avoid doing it per string
+        min_len_valid = min_len > 1
+        max_len_valid = max_len < 46
+        has_len_filter = min_len_valid or max_len_valid
+        
+        # Optimize search using pre-lowercased list and single pass
         data = self.wordlists[lang]
         
+        candidates = []
+        if prefix:
+            prefix_lower = prefix.lower()
+            for i, word_lower in enumerate(data['lower']):
+                if word_lower.startswith(prefix_lower) and word_lower not in self.used_words:
+                    if not has_len_filter or (min_len <= len(word_lower) <= max_len):
+                        candidates.append(data['full'][i])
+        else:
+            for i, word_lower in enumerate(data['lower']):
+                if prompt in word_lower and word_lower not in self.used_words:
+                    if not has_len_filter or (min_len <= len(word_lower) <= max_len):
+                        candidates.append(data['full'][i])
+
+        if not candidates:
+            return None
+
         # Prepare exclude set
         exclude_chars = set(exclude_letters.lower().replace(' ', '').replace(',', ''))
-        
-        all_matches = [
-            data['full'][i] 
-            for i, word_lower in enumerate(data['lower'])
-            if prompt in word_lower 
-            and min_len <= len(word_lower) <= max_len
-            and word_lower not in self.used_words
-        ]
-
-        if not all_matches:
-            return None
 
         # Filter out exclude_chars from beginning of words, UNLESS it empties the list
         if exclude_chars:
-            filtered = [w for w in all_matches if w.lower()[0] not in exclude_chars]
-            candidates = filtered if filtered else all_matches
-        else:
-            candidates = all_matches
+            filtered = [w for w in candidates if w.lower()[0] not in exclude_chars]
+            candidates = filtered if filtered else candidates
 
         # Pre-filter (Starts With):
         starts_chars = set(starts_with_letters.lower().replace(' ', '').replace(',', ''))

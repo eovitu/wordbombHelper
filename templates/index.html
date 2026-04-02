@@ -4,233 +4,295 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WordBomb Helper</title>
+    <title>WordBomb Hub</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 
 <body>
-    <div class="container">
-        <!-- Futuristic Minimalist Background Layer -->
-        <div class="glow-bg"></div>
+    <div class="bg-dark"></div>
 
-        <nav class="navbar glass-panel">
-            <h1 class="logo">WordBomb<span class="highlight">.</span></h1>
-            <div class="nav-links">
-                <button class="nav-btn active" onclick="switchTab('manual')">Manual</button>
-                <button class="nav-btn" onclick="switchTab('auto')">Auto-Play</button>
-                <button class="nav-btn" onclick="switchTab('config')">Config</button>
+    <div class="app-layout">
+        <!-- Top Navigation -->
+        <header class="top-header">
+            <div class="logo-area">
+                <span class="logo-mark">WB<span class="dot">.</span></span>
             </div>
-        </nav>
 
-        <div id="manual-tab" class="tab-content active">
-            <div class="card glass-panel game-card">
-                <div class="word-display">
-                    <span id="current-word">Waiting...</span>
+            <nav class="nav-menu">
+                <button class="nav-btn active" onclick="switchTab('manual')" id="nav-btn-manual" aria-label="Manual Mode">
+                    <span class="nav-label">Manual</span>
+                    <span class="nav-shortcut">Alt+1</span>
+                </button>
+
+                <button class="nav-btn" onclick="switchTab('auto')" id="nav-btn-auto" aria-label="Auto-Play Mode">
+                    <span class="nav-label">Auto</span>
+                    <span class="nav-shortcut">Alt+2</span>
+                </button>
+
+                <button class="nav-btn" onclick="switchTab('config')" id="nav-btn-config" aria-label="Settings">
+                    <span class="nav-label">Config</span>
+                    <span class="nav-shortcut">Alt+3</span>
+                </button>
+            </nav>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="content-area">
+            
+            <!-- Manual Tab -->
+            <section id="manual-tab" class="tab-content active">
+                <div class="futuristic-panel text-center">
+                    <span class="surface-label">TERMINAL MATCH</span>
+                    <h2 id="current-word" class="hero-text">Waiting...</h2>
                 </div>
 
-                <div class="input-group">
-                    <input type="text" id="prompt-input" placeholder="Enter syllable prompt..." autocomplete="off"
-                        autofocus>
-                    <div class="input-highlight"></div>
-                </div>
-
-                <div class="priority-group-inline">
-                    <label for="starts-with-input" class="inline-label">🚀 Starts With Letters:</label>
-                    <input type="text" id="starts-with-input" class="inline-input" placeholder="e.g. k, y, w">
-                </div>
-
-                <div class="priority-group-inline">
-                    <label for="priority-input" class="inline-label">🎯 Contains Priority Letters:</label>
-                    <input type="text" id="priority-input" class="inline-input" placeholder="e.g. q, x, z">
-                </div>
-
-                <div class="priority-group-inline">
-                    <label for="exclude-input" class="inline-label">🚫 Exclude Letters:</label>
-                    <input type="text" id="exclude-input" class="inline-input" placeholder="e.g. y, w, k">
-                </div>
-
-                <div class="button-group">
-                    <button class="action-btn reset-btn" onclick="resetWords()">Reset Used Words</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="auto-tab" class="tab-content">
-            <div class="card glass-panel auto-card">
-                <div class="status-display">
-                    <div class="status-indicator" id="auto-status-indicator"></div>
-                    <span id="auto-status-text">Idle</span>
-                </div>
-
-                <div class="controls-group">
-                    <button class="action-btn primary-btn" onclick="toggleAutoPlay()" id="autoplay-toggle-btn">Start
-                        Auto-Play</button>
-                    <button class="action-btn secondary-btn" onclick="startCalibration()">Calibrate Screen</button>
-                </div>
-
-                <div class="log-container">
-                    <div id="auto-logs">
-                        <div class="log-entry">System ready. Please calibrate first.</div>
+                <div class="input-stack">
+                    <div class="cyber-input-group">
+                        <input type="text" id="prompt-input" class="cyber-input" placeholder="Prompt syllable (Enter)" autocomplete="off" autofocus>
+                    </div>
+                    <div class="cyber-input-group">
+                        <input type="text" id="prefix-input" class="cyber-input" placeholder="Starts with (Enter)" autocomplete="off">
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <div id="config-tab" class="tab-content">
-            <div class="card glass-panel config-card">
-                <div class="preset-management">
-                    <div class="config-group">
-                        <label>Config Presets</label>
-                        <div class="preset-controls">
-                            <select id="preset-selector">
-                                <option value="" disabled selected>Selecione um preset...</option>
-                                <!-- Populated by JS -->
-                            </select>
-                            <button class="action-btn primary-btn preset-btn" onclick="saveNewPreset()">Salvar Novo</button>
-                            <button class="action-btn danger-btn preset-btn" onclick="deletePreset()">Remover</button>
+                <div class="filters-panel">
+                    <div class="filter-grid">
+                        <div class="filter-box">
+                            <label for="starts-with-input">START WITH</label>
+                            <input type="text" id="starts-with-input" placeholder="k, y">
+                        </div>
+                        <div class="filter-box">
+                            <label for="priority-input">PRIORITY</label>
+                            <input type="text" id="priority-input" placeholder="q, x">
+                        </div>
+                        <div class="filter-box">
+                            <label for="exclude-input">EXCLUDE</label>
+                            <input type="text" id="exclude-input" placeholder="w, z">
                         </div>
                     </div>
+                    <button class="btn-text btn-danger w-full mt-2" onclick="resetWords()">PURGE HISTORY</button>
                 </div>
+            </section>
 
-                <div class="config-divider"></div>
+            <!-- Auto-Play Tab -->
+            <section id="auto-tab" class="tab-content">
+                <div class="auto-panel">
+                    <div class="status-orb-container">
+                        <div class="orb-ring" id="status-ring">
+                            <div class="orb-core" id="auto-status-indicator"></div>
+                        </div>
+                        <h2 class="status-display" id="auto-status-text">Idle</h2>
+                    </div>
 
-                <div class="config-group">
-                    <label>Language</label>
-                    <div class="language-selector" id="lang-selector">
-                        <!-- Populated by JS -->
+                    <div class="stack-buttons">
+                        <button class="btn-solid btn-primary w-full" onclick="toggleAutoPlay()" id="autoplay-toggle-btn">
+                            ENGAGE AUTOMATON
+                        </button>
+                        <button class="btn-outline w-full" onclick="startCalibration()">
+                            CALIBRATE SCREEN
+                        </button>
                     </div>
                 </div>
 
-                <div class="config-group" id="sublist-group" style="display:none">
-                    <label>🎯 Sub-Lista Prioritária</label>
-                    <select id="sublist-select">
-                        <option value="">Nenhuma (usar lista principal)</option>
-                        <!-- Populated by JS -->
-                    </select>
-                    <small id="sublist-hint" style="color: var(--text-muted, #888); font-size: 0.8rem; margin-top: 4px; display: block;">
-                        Se encontrar a palavra nesta sub-lista, usa ela. Se não, cai na lista principal.
-                    </small>
-                </div>
-
-                <div class="config-group">
-                    <label>Strategy</label>
-                    <select id="strategy-select">
-                        <option value="random">Random</option>
-                        <option value="shortest">Shortest</option>
-                        <option value="longest">Longest</option>
-                        <option value="hyphen">Hyphens</option>
-                        <option value="alpha">Alphabetical (A-Z)</option>
-                        <option value="recover">Recover Lives (Unplayed Letters)</option>
-                    </select>
-                </div>
-
-                <div class="config-group double-input" id="recover-config-group">
-                    <div>
-                        <label>Recover Target</label>
-                        <input type="number" id="recover-target" value="2" min="1" max="10">
+                <div class="log-panel">
+                    <div class="log-header">
+                        <span>SYS LOG</span>
                     </div>
-                    <div>
-                        <label>Recover Exclude</label>
-                        <!-- Using inline styles matched to input[type=number] to keep CSS perfectly decoupled -->
-                        <input type="text" id="recover-exclude" placeholder="w, y, k" style="width: 100%; padding: 1rem; background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); outline: none; font-family: inherit; font-size: 1rem; box-sizing: border-box; transition: border-color 0.3s ease;">
+                    <div class="terminal-window" id="auto-logs">
+                        <div class="log-line sys">System initialized.</div>
                     </div>
                 </div>
+            </section>
 
-                <div class="config-group toggle-group">
-                    <label>Simulate Typing</label>
-                    <label class="switch">
-                        <input type="checkbox" id="auto-type-toggle">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
-
-                <div class="config-group toggle-group" title="Bate no teclado, dá ENTER, espera um pouco e digita a palavra rápido.">
-                    <label>⏩ Modo Retardado</label>
-                    <label class="switch">
-                        <input type="checkbox" id="delayed-type-toggle">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
-
-                <div class="config-group toggle-group" title="Adiciona um ponto final (.) ao final de 99% das palavras.">
-                    <label>📌 Ponto Final (99%)</label>
-                    <label class="switch">
-                        <input type="checkbox" id="period-toggle">
-                        <span class="slider round"></span>
-                    </label>
-                </div>
-
-                <div class="config-group">
-                    <label>Speed (WPM): <span id="wpm-value">60</span></label>
-                    <input type="range" id="wpm-slider" min="10" max="2000" value="60">
-                </div>
-
-                <div class="config-group">
-                    <label>Error Rate (Typo): <span id="error-value">0</span>%</label>
-                    <input type="range" id="error-slider" min="0" max="10" step="0.5" value="0">
-                </div>
-
-                <div class="config-group">
-                    <label>Travadinha (Hesitation): <span id="travadinha-value">5</span>%</label>
-                    <input type="range" id="travadinha-slider" min="0" max="100" step="1" value="5">
-                </div>
-
-                <div class="config-group">
-                    <label>Chance Erro Total (Retry): <span id="retry-value">0</span>%</label>
-                    <input type="range" id="retry-slider" min="0" max="2.5" step="0.1" value="0">
-                </div>
-
-                <div class="config-group">
-                    <label>Chance Erro Tardo (Late): <span id="late-error-value">0</span>%</label>
-                    <input type="range" id="late-error-slider" min="0" max="100" step="1" value="0">
-                </div>
-
-                <div class="config-group double-input">
-                    <div>
-                        <label>Max Erros (Typo): <span id="max-typos-value">2</span></label>
-                        <input type="range" id="max-typos-slider" min="0" max="5" step="1" value="2">
+            <!-- Config Tab -->
+            <section id="config-tab" class="tab-content">
+                <div class="preset-controls mb-4">
+                    <div class="select-box premium-select flex-1">
+                        <select id="preset-selector">
+                            <option value="" disabled selected>Load preset...</option>
+                        </select>
                     </div>
-                    <div>
-                        <label>Max Erros (Late): <span id="max-late-value">1</span></label>
-                        <input type="range" id="max-late-slider" min="0" max="5" step="1" value="1">
-                    </div>
+                    <button class="btn-outline btn-sm" onclick="saveNewPreset()">Save</button>
+                    <button class="btn-outline btn-sm c-danger" onclick="deletePreset()">Del</button>
                 </div>
 
-                <div class="config-group double-input">
-                    <div>
-                        <label>Min Length</label>
-                        <input type="number" id="min-len" value="1" min="1" max="46">
-                    </div>
-                    <div>
-                        <label>Max Length</label>
-                        <input type="number" id="max-len" value="46" min="1" max="46">
-                    </div>
-                </div>
+                <div class="settings-masonry">
+                    
+                    <!-- Language & Core -->
+                    <div class="settings-card">
+                        <div class="card-header">
+                            <h3>LEXICON</h3>
+                        </div>
+                        
+                        <div class="form-group block">
+                            <label>TARGET LANGUAGE</label>
+                            <div class="pill-group" id="lang-selector">
+                                <!-- JS Populated -->
+                            </div>
+                        </div>
 
-                <div class="config-group double-input">
-                    <div title="Busca palavras deste tamanho pra cima. Se não achar, ignora e busca qualquer uma.">
-                        <label>Priority Min Len</label>
-                        <input type="number" id="priority-min-len" value="1" min="1" max="46">
+                        <div class="form-group block" id="sublist-group" style="display:none">
+                            <label>SUBLIST</label>
+                            <div class="select-box">
+                                <select id="sublist-select">
+                                    <option value="">Master List</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group block mt-4">
+                            <label>SELECTION HEURISTIC</label>
+                            <div class="select-box">
+                                <select id="strategy-select">
+                                    <option value="random">Random</option>
+                                    <option value="shortest">Shortest</option>
+                                    <option value="longest">Longest</option>
+                                    <option value="alpha">Alphabetical</option>
+                                    <option value="recover">Recover Lives</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="flex-row gap-2 mt-4" id="recover-config-group">
+                            <div class="form-group">
+                                <label>R. TARGET</label>
+                                <input type="number" id="recover-target" class="border-input text-center" value="2" min="1" max="10">
+                            </div>
+                            <div class="form-group flex-1">
+                                <label>R. EXCLUDE</label>
+                                <input type="text" id="recover-exclude" class="border-input" placeholder="w, z">
+                            </div>
+                        </div>
                     </div>
-                    <div title="Busca palavras deste tamanho pra baixo. Se não achar, ignora e busca qualquer uma.">
-                        <label>Priority Max Len</label>
-                        <input type="number" id="priority-max-len" value="46" min="1" max="46">
+
+                    <!-- Automation Behavior -->
+                    <div class="settings-card">
+                        <div class="card-header">
+                            <h3>DYNAMICS</h3>
+                        </div>
+
+                        <div class="toggle-list">
+                            <div class="toggle-item">
+                                <div class="toggle-text">
+                                    <h4>Auto-Type Event</h4>
+                                </div>
+                                <label class="cyber-switch">
+                                    <input type="checkbox" id="auto-type-toggle">
+                                    <span class="switch-ui"></span>
+                                </label>
+                            </div>
+
+                            <div class="toggle-item">
+                                <div class="toggle-text">
+                                    <h4>Retardado Spammer</h4>
+                                </div>
+                                <label class="cyber-switch">
+                                    <input type="checkbox" id="delayed-type-toggle">
+                                    <span class="switch-ui"></span>
+                                </label>
+                            </div>
+
+                            <div class="toggle-item">
+                                <div class="toggle-text">
+                                    <h4>Stealth Period (.)</h4>
+                                </div>
+                                <label class="cyber-switch">
+                                    <input type="checkbox" id="period-toggle">
+                                    <span class="switch-ui"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="divider"></div>
+
+                        <div class="slider-group">
+                            <div class="slider-labels">
+                                <span>TYPE VELOCITY</span>
+                                <span class="badge"><span id="wpm-value">120</span></span>
+                            </div>
+                            <input type="range" class="premium-slider" id="wpm-slider" min="10" max="2000" value="120">
+                        </div>
+
+                        <div class="slider-group">
+                            <div class="slider-labels">
+                                <span>HESITATION PROB.</span>
+                                <span class="badge"><span id="travadinha-value">5</span>%</span>
+                            </div>
+                            <input type="range" class="premium-slider" id="travadinha-slider" min="0" max="100" step="1" value="5">
+                        </div>
                     </div>
+
+                    <!-- Imperfection Injection -->
+                    <div class="settings-card">
+                        <div class="card-header">
+                            <h3>HUMAN IMPERFECTION</h3>
+                        </div>
+
+                        <div class="flex-col gap-4">
+                            <div class="slider-group">
+                                <div class="slider-labels">
+                                    <span>STANDARD TYPOS</span>
+                                    <span class="badge muted"><span id="error-value">0</span>%</span>
+                                </div>
+                                <div class="flex-row gap-3 items-center">
+                                    <input type="range" class="premium-slider" id="error-slider" min="0" max="10" step="0.5" value="0">
+                                    <input type="number" id="max-typos-slider" class="micro-input" min="0" max="5" value="2" title="Max Typos">
+                                </div>
+                            </div>
+                            
+                            <div class="slider-group">
+                                <div class="slider-labels">
+                                    <span>LATE RETRACTION</span>
+                                    <span class="badge muted"><span id="late-error-value">0</span>%</span>
+                                </div>
+                                <div class="flex-row gap-3 items-center">
+                                    <input type="range" class="premium-slider" id="late-error-slider" min="0" max="100" value="0">
+                                    <input type="number" id="max-late-slider" class="micro-input" min="0" max="5" value="1" title="Max Events">
+                                </div>
+                            </div>
+
+                            <div class="slider-group">
+                                <div class="slider-labels">
+                                    <span>RETRY PROB.</span>
+                                    <span class="badge muted"><span id="retry-value">0</span>%</span>
+                                </div>
+                                <input type="range" class="premium-slider" id="retry-slider" min="0" max="2.5" step="0.1" value="0">
+                            </div>
+
+                            <div class="length-limits">
+                                <div class="limit-box">
+                                    <span class="label">ABS. BOUNDS</span>
+                                    <div class="flex-row gap-2">
+                                        <input type="number" id="min-len" value="1" min="1" max="46">
+                                        <span class="sep">-</span>
+                                        <input type="number" id="max-len" value="46" min="1" max="46">
+                                    </div>
+                                </div>
+                                <div class="limit-box accent">
+                                    <span class="label">PRIORITY</span>
+                                    <div class="flex-row gap-2">
+                                        <input type="number" id="priority-min-len" value="1" min="1" max="46">
+                                        <span class="sep">-</span>
+                                        <input type="number" id="priority-max-len" value="46" min="1" max="46">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                 </div>
-            </div>
-        </div>
+            </section>
+        </main>
     </div>
 
-    <!-- Calibration Overlay -->
-    <div id="calibration-overlay" class="overlay hidden">
-        <div class="overlay-content">
-            <h2 id="calib-instruction">Click Top-Left of Turn Indicator</h2>
-            <p>Click anywhere to cancel</p>
+    <!-- Minimal Overlay -->
+    <div id="calibration-overlay" class="calib-glass hidden">
+        <div class="calib-modal">
+            <h2 id="calib-instruction">CLICK BOUNDARY</h2>
         </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
-
 </html>

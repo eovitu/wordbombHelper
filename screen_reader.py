@@ -224,12 +224,8 @@ class ScreenReader:
         img_bgr = np.array(sct_img)
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
         
-        # Upscale for better OCR (2x is enough for performance)
-        h, w = img_bgr.shape[:2]
-        img_large = cv2.resize(img_bgr, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
-
-        # 1. TURN DETECTION (Full Image Analysis)
-        hsv_full = cv2.cvtColor(img_large, cv2.COLOR_BGR2HSV)
+        # OPTIMIZATION: Do color masking directly on the raw, non-upscaled image first!
+        hsv_small = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         
         # Ranges for "SUA VEZ" button colors
         lower_yellow = np.array([20, 100, 100])
@@ -237,8 +233,25 @@ class ScreenReader:
         lower_blue = np.array([100, 150, 150])
         upper_blue = np.array([130, 255, 255])
         
+        mask_yellow_small = cv2.inRange(hsv_small, lower_yellow, upper_yellow)
+        mask_blue_small = cv2.inRange(hsv_small, lower_blue, upper_blue)
+
+        # Early exit on small image (Thresholds / 4. 500/4 = 125, we use 100)
+        if cv2.countNonZero(mask_yellow_small) <= 100 and cv2.countNonZero(mask_blue_small) <= 100:
+            return "", None, False
+
+        # Upscale for better OCR (2x is enough for performance)
+        h, w = img_bgr.shape[:2]
+        img_large = cv2.resize(img_bgr, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
+
+        # 1. TURN DETECTION (Full Image Analysis)
+        hsv_full = cv2.cvtColor(img_large, cv2.COLOR_BGR2HSV)
+        
         mask_yellow_full = cv2.inRange(hsv_full, lower_yellow, upper_yellow)
         mask_blue_full = cv2.inRange(hsv_full, lower_blue, upper_blue)
+        
+        yellow_pixels = cv2.countNonZero(mask_yellow_full)
+        blue_pixels = cv2.countNonZero(mask_blue_full)
 
         # 2. PROMPT EXTRACTION (Balanced Cropping)
         # Vertical: Crop to top 35% (Stricter than 38% to be safe)
@@ -292,11 +305,7 @@ class ScreenReader:
         logger.info(f"OCR RAW: '{full_text}'")
 
         # Detect "SUA VEZ" or "YOUR TURN"
-        logger.info(f"OCR RAW: '{full_text}'")
-        
-        # Method 1: Pixel count in masks (Using FULL image for reliability)
-        yellow_pixels = cv2.countNonZero(mask_yellow_full)
-        blue_pixels = cv2.countNonZero(mask_blue_full)
+        # yellow_pixels and blue_pixels were already calculated above
         
         # Higher thresholds to avoid false positives from background pixels
         # On a 3x upscaled 329x161 image, a real button has >1000 colored pixels

@@ -160,6 +160,7 @@ def get_word():
     # Configure recovery logic before getting word
     rec_target = int(data.get('recover_target', 2))
     rec_exclude = data.get('recover_exclude', '')
+    prefix = data.get('prefix', '')
     wm.set_recover_config(rec_target, rec_exclude)
 
     word = wm.get_word(prompt, lang, min_len, max_len, strategy,
@@ -168,7 +169,8 @@ def get_word():
                        starts_with_letters=starts_with_letters,
                        priority_min_len=priority_min_len,
                        priority_max_len=priority_max_len,
-                       priority_sublist=priority_sublist)
+                       priority_sublist=priority_sublist,
+                       prefix=prefix)
     
     if word:
         wm.mark_used(word)
