@@ -8,12 +8,12 @@ import keyboard
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.001 # Minimize default pause between actions
 
-# QWERTY Proximity Map for realistic typos
+# QWERTY Proximity Map for realistic typos (Narrowed down for ultra-realism)
 QWERTY_MAP = {
-    'q': 'wa', 'w': 'qeasd', 'e': 'wrsfd', 'r': 'etdfg', 't': 'ryfgh', 'y': 'tughj', 'u': 'yihjk', 'i': 'uojkl', 'o': 'ipkl', 'p': 'ol',
-    'a': 'qwsz', 's': 'qweadzx', 'd': 'wersfxc', 'f': 'ertdgcv', 'g': 'rtyfhvb', 'h': 'tyugjbn', 'j': 'yuihknm', 'k': 'uiojlm', 'l': 'iopk',
-    'z': 'asx', 'x': 'zsdc', 'c': 'xdfv', 'v': 'cfgb', 'b': 'vghn', 'n': 'bhjm', 'm': 'njk',
-    '-': '0p', '.': 'm,', ',': 'mn', ' ': 'vbnm',
+    'q': 'wa', 'w': 'qse', 'e': 'wsdr', 'r': 'edf', 't': 'rfgy', 'y': 'tghu', 'u': 'yhij', 'i': 'ujko', 'o': 'iklp', 'p': 'ol',
+    'a': 'qwsz', 's': 'awedxz', 'd': 'serfcx', 'f': 'drtgvc', 'g': 'ftyhbv', 'h': 'gyujnb', 'j': 'huikmn', 'k': 'jiol,m', 'l': 'kop',
+    'z': 'asx', 'x': 'zsdc', 'c': 'xdfv', 'v': 'cfgb', 'b': 'vghn', 'n': 'bhjm', 'm': 'njk,',
+    '.': 'm,', ',': 'mn.', ' ': 'cvbnm',
     'á': 'asw', 'ã': 'asw', 'à': 'asw', 'â': 'asw',
     'é': 'erdw', 'ê': 'erdw',
     'í': 'iujk',
@@ -257,23 +257,38 @@ class Typer:
 
             # --- 3. ERROR LOGIC & KEYSTROKE ---
             
-            # 3.1 Normal Typo Correction (Immediate)
+            # 3.1 Normal Typo Correction (Immediate - Fat finger insertion or realistic substitution)
             # Only trigger Standard Typo if NOT in a Late Mistake to avoid chaos
             if not late_mistake_active and typos_made < max_typos and error_rate > 0 and random.random() < error_rate:
                 typos_made += 1
                 wrong_char = self._get_typo_char(char)
-                keyboard.write(wrong_char)
                 
-                # Realization pause
-                time.sleep(max(0.12, abs(random.gauss(0.28, 0.08))))
-                keyboard.press_and_release('backspace')
+                # 70% chance to simulate fat-finger insertion (types correct then wrong immediately, deletes wrong)
+                # 30% chance to simulate substitution (types wrong instead of correct, deletes wrong, types correct)
+                if random.random() < 0.7:
+                    keyboard.write(char)
+                    time.sleep(random.uniform(0.01, 0.05))
+                    keyboard.write(wrong_char)
+                    
+                    # Realization pause
+                    time.sleep(max(0.12, abs(random.gauss(0.28, 0.08))))
+                    keyboard.press_and_release('backspace')
+                    
+                    # Already typed correctly, so increment i and continue
+                    i += 1
+                else:
+                    keyboard.write(wrong_char)
+                    
+                    # Realization pause
+                    time.sleep(max(0.12, abs(random.gauss(0.28, 0.08))))
+                    keyboard.press_and_release('backspace')
+                    
+                    # Do not increment i, will retry the same char on next loop iteration
                 
                 # Recovery pause
                 time.sleep(abs(random.gauss(0.18, 0.05)))
                 recovery_penalty = 0.35
                 in_burst = False
-                
-                # IMPORTANT: DO NOT increment i. Continue to redo the iteration and type the CORRECT character.
                 continue
 
             # 3.2 Late Mistake Trigger

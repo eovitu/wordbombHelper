@@ -17,7 +17,10 @@
         "starts_with_letters": "",
         "recover_target": 2,
         "recover_exclude": "",
-        "priority_sublist": ""
+        "priority_sublist": "",
+        "auto_type": true,
+        "delayed_type": false,
+        "add_period_prob": 0.0
     },
     "sem erro": {
         "min_len": 1,
@@ -37,6 +40,32 @@
         "starts_with_letters": "",
         "recover_target": 2,
         "recover_exclude": "",
-        "priority_sublist": ""
+        "priority_sublist": "",
+        "auto_type": true,
+        "delayed_type": false,
+        "add_period_prob": 0.0
+    },
+    "Pro Player (Muito Humano)": {
+        "min_len": 1,
+        "max_len": 46,
+        "priority_min_len": 1,
+        "priority_max_len": 46,
+        "wpm": 185,
+        "error_rate": 0.015,
+        "hesitation_prob": 0.02,
+        "retry_rate": 0.01,
+        "late_error_rate": 0.015,
+        "max_typos": 2,
+        "max_late_errors": 1,
+        "strategy": "random",
+        "priority_letters": "",
+        "exclude_letters": "",
+        "starts_with_letters": "",
+        "recover_target": 2,
+        "recover_exclude": "",
+        "priority_sublist": "",
+        "auto_type": true,
+        "delayed_type": false,
+        "add_period_prob": 0.0
     }
 }
