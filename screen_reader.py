@@ -10,8 +10,6 @@ import numpy as np
 import os
 from pynput import mouse
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 import platform
