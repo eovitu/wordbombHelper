@@ -1,6 +1,8 @@
 # Python cache
 __pycache__/
 *.pyc
+tmp/
+debug_screenshots/
 
 # OCR debug artifacts
 debug_screenshots/*.png
