@@ -1,6 +1,4 @@
-import os
 import unicodedata
-from collections import defaultdict
 
 class TrieNode:
     def __init__(self):
