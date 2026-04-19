@@ -31,6 +31,16 @@ let currentConfig = {
     add_period_prob: 0.0
 };
 
+function debounce(fn, wait = 250) {
+    let timer = null;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), wait);
+    };
+}
+
+const scheduleSyncConfig = debounce(() => syncConfigToBackend(), 250);
+
 function setupGlobalShortcuts() {
     document.addEventListener('keydown', (e) => {
         // Only trigger if Alt is pressed
@@ -79,7 +89,7 @@ function setupEventListeners() {
         slider.addEventListener('input', (e) => {
             currentConfig[field] = parseFloat(e.target.value) / divisor;
             if(display) display.textContent = display.textContent.includes('%') ? e.target.value : (field === 'retry_rate' ? (e.target.value).toString() : e.target.value);
-            syncConfigToBackend();
+            scheduleSyncConfig();
         });
     };
 
@@ -90,9 +100,9 @@ function setupEventListeners() {
     bindSlider('late-error', 'late_error_rate', 100);
 
     const maxTypos = document.getElementById('max-typos-slider');
-    if(maxTypos) maxTypos.addEventListener('input', (e) => { currentConfig.max_typos = parseInt(e.target.value); syncConfigToBackend(); });
+    if(maxTypos) maxTypos.addEventListener('input', (e) => { currentConfig.max_typos = parseInt(e.target.value); scheduleSyncConfig(); });
     const maxLate = document.getElementById('max-late-slider');
-    if(maxLate) maxLate.addEventListener('input', (e) => { currentConfig.max_late_errors = parseInt(e.target.value); syncConfigToBackend(); });
+    if(maxLate) maxLate.addEventListener('input', (e) => { currentConfig.max_late_errors = parseInt(e.target.value); scheduleSyncConfig(); });
 
     // Number Inputs
     const bindNumber = (id, field, defaultVal) => {
@@ -100,7 +110,7 @@ function setupEventListeners() {
         if(!el) return;
         el.addEventListener('change', (e) => {
             currentConfig[field] = parseInt(e.target.value) || defaultVal;
-            syncConfigToBackend();
+            scheduleSyncConfig();
         });
     };
     bindNumber('min-len', 'min_len', 1);
@@ -122,22 +132,22 @@ function setupEventListeners() {
         if (!input) return;
         input.addEventListener('input', (e) => {
             currentConfig[field] = e.target.value;
-            syncConfigToBackend();
+            scheduleSyncConfig();
         });
     });
 
     const strategy = document.getElementById('strategy-select');
-    if(strategy) strategy.addEventListener('change', (e) => { currentConfig.strategy = e.target.value; syncConfigToBackend(); });
+    if(strategy) strategy.addEventListener('change', (e) => { currentConfig.strategy = e.target.value; scheduleSyncConfig(); });
     const sublist = document.getElementById('sublist-select');
-    if(sublist) sublist.addEventListener('change', (e) => { currentConfig.priority_sublist = e.target.value; syncConfigToBackend(); });
+    if(sublist) sublist.addEventListener('change', (e) => { currentConfig.priority_sublist = e.target.value; scheduleSyncConfig(); });
 
     // Toggles
     const autoType = document.getElementById('auto-type-toggle');
-    if(autoType) autoType.addEventListener('change', (e) => { currentConfig.auto_type = e.target.checked; syncConfigToBackend(); });
+    if(autoType) autoType.addEventListener('change', (e) => { currentConfig.auto_type = e.target.checked; scheduleSyncConfig(); });
     const delayedType = document.getElementById('delayed-type-toggle');
-    if(delayedType) delayedType.addEventListener('change', (e) => { currentConfig.delayed_type = e.target.checked; syncConfigToBackend(); });
+    if(delayedType) delayedType.addEventListener('change', (e) => { currentConfig.delayed_type = e.target.checked; scheduleSyncConfig(); });
     const periodToggle = document.getElementById('period-toggle');
-    if(periodToggle) periodToggle.addEventListener('change', (e) => { currentConfig.add_period_prob = e.target.checked ? 0.99 : 0.0; syncConfigToBackend(); });
+    if(periodToggle) periodToggle.addEventListener('change', (e) => { currentConfig.add_period_prob = e.target.checked ? 0.99 : 0.0; scheduleSyncConfig(); });
 
     // Game Inputs
     const promptInput = document.getElementById('prompt-input');
@@ -452,7 +462,7 @@ async function toggleAutoPlay() {
     } catch (e) { logAuto("Error toggling auto-play"); }
 }
 
-let lastLogCount = 0;
+let lastLogId = 0;
 async function pollAutoStatus() {
     if (!document.getElementById('auto-tab').classList.contains('active') && !isCalibrating) return;
     try {
@@ -484,9 +494,14 @@ async function pollAutoStatus() {
         }
 
         if (state.logs && state.logs.length > 0) {
-            const newLogs = state.logs.slice(lastLogCount);
-            newLogs.forEach(msg => logAuto(msg));
-            lastLogCount = state.logs.length;
+            state.logs.forEach(entry => {
+                const id = typeof entry === 'object' ? entry.id : 0;
+                const msg = typeof entry === 'object' ? entry.msg : entry;
+                if (id > lastLogId) {
+                    logAuto(msg);
+                    lastLogId = id;
+                }
+            });
         }
 
         const btn = document.getElementById('autoplay-toggle-btn');

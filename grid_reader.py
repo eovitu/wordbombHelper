@@ -22,6 +22,7 @@ else:
 class GridReader:
     def __init__(self, debug_dir="debug_screenshots"):
         self.debug_dir = debug_dir
+        self.save_debug = os.getenv('GRID_DEBUG_SAVE', '0').lower() in ('1', 'true', 'yes', 'on')
         if not os.path.exists(self.debug_dir):
             os.makedirs(self.debug_dir)
 
@@ -47,8 +48,9 @@ class GridReader:
         img_bgr = np.array(sct_img)
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
         
-        # Save raw capture for debugging
-        cv2.imwrite(os.path.join(self.debug_dir, "grid_raw.png"), img_bgr)
+        # Save raw capture only when debug mode is enabled
+        if self.save_debug:
+            cv2.imwrite(os.path.join(self.debug_dir, "grid_raw.png"), img_bgr)
 
         # The image is a 5x5 grid. 
         # Calculate cell width and height
@@ -147,6 +149,8 @@ class GridReader:
                 for variant in self._build_ocr_variants(letter_roi):
                     char, conf = self._ocr_char_with_conf(variant)
                     candidates.append((char, conf))
+                    if char != '.' and conf >= 85.0:
+                        break
 
                 best_char, best_conf = max(candidates, key=lambda it: it[1]) if candidates else ('.', -1)
 
@@ -157,9 +161,10 @@ class GridReader:
                 if best_char not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ-':
                     best_char = '.'
 
-                # Save per-cell debug image with final decision.
-                debug_filename = os.path.join(self.debug_dir, f"cell_{row}_{col}_{best_char}.png")
-                cv2.imwrite(debug_filename, self._to_tesseract_canvas(cv2.threshold(letter_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]))
+                # Save per-cell debug image with final decision only when enabled.
+                if self.save_debug:
+                    debug_filename = os.path.join(self.debug_dir, f"cell_{row}_{col}_{best_char}.png")
+                    cv2.imwrite(debug_filename, self._to_tesseract_canvas(cv2.threshold(letter_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]))
 
                 row_chars.append(best_char)
                 
