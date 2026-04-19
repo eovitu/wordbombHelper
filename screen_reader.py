@@ -68,8 +68,8 @@ class ScreenReader:
         self.save_debug_screenshots = False
         self.last_word_typed = ""
         
-        # Initialize mss
-        self.sct = mss.mss()
+        # Frame hash cache — skip processing if screen is visually identical between polls
+        self._last_frame_hash = None
 
     def set_callback(self, callback):
         self.callback_found_word = callback
@@ -218,8 +218,16 @@ class ScreenReader:
             "height": self.prompt_region['height']
         }
         
-        # Capture using mss (much faster than pyautogui)
-        sct_img = self.sct.grab(monitor)
+        # Capture using mss with a local instance (thread-safe: no shared state)
+        with mss.mss() as sct:
+            sct_img = sct.grab(monitor)
+        
+        # Frame cache: skip the expensive pipeline if screen is visually identical
+        frame_hash = hash(bytes(sct_img.raw))
+        if frame_hash == self._last_frame_hash:
+            return "", None, False
+        self._last_frame_hash = frame_hash
+
         # Convert to numpy array (mss returns BGRA)
         img_bgr = np.array(sct_img)
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
@@ -299,10 +307,11 @@ class ScreenReader:
         # OCR with Portuguese and English
         tess_lang = 'por+eng'
         # PSM 7: Usually the prompt is a single line/blob in the cropped area
-        config = '--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
+        tessdata_path = os.path.join(os.getcwd(), 'tessdata')
+        config = f'--tessdata-dir "{tessdata_path}" --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
         full_text = pytesseract.image_to_string(pil_to_ocr, lang=tess_lang, config=config).strip().upper()
         
-        logger.info(f"OCR RAW: '{full_text}'")
+        logger.debug(f"OCR RAW: '{full_text}'")
 
         # Detect "SUA VEZ" or "YOUR TURN"
         # yellow_pixels and blue_pixels were already calculated above
@@ -323,13 +332,13 @@ class ScreenReader:
         
         if (yellow_pixels > 5000 or blue_pixels > 5000):
             is_my_turn = True
-            logger.info(f"SUA VEZ validated by high-confidence color! (Y:{yellow_pixels}, B:{blue_pixels})")
+            logger.debug(f"SUA VEZ validated by high-confidence color! (Y:{yellow_pixels}, B:{blue_pixels})")
         elif (yellow_pixels > 1500 or blue_pixels > 1500) and keyword_detected:
             is_my_turn = True
-            logger.info(f"SUA VEZ validated by color + keyword (Y:{yellow_pixels}, B:{blue_pixels})")
+            logger.debug(f"SUA VEZ validated by color + keyword (Y:{yellow_pixels}, B:{blue_pixels})")
         elif keyword_detected and not (yellow_pixels > 500 or blue_pixels > 500):
             # If we see the keyword but NO color at all, it's likely a hallucination or another player.
-            logger.info(f"Ignoring turn keyword: pixels too low (Y:{yellow_pixels}, B:{blue_pixels})")
+            logger.debug(f"Ignoring turn keyword: pixels too low (Y:{yellow_pixels}, B:{blue_pixels})")
             is_my_turn = False
 
         # Extract prompt: look for the most likely syllable
@@ -367,9 +376,9 @@ class ScreenReader:
             
             if not is_ghost:
                 prompt_text = full_candidate
-                logger.info(f"Prompt extracted: '{prompt_text}'")
+                logger.debug(f"Prompt extracted: '{prompt_text}'")
             else:
-                logger.info(f"Ghost prompt '{full_candidate}' ignored (suffix of '{self.last_word_typed}')")
+                logger.debug(f"Ghost prompt '{full_candidate}' ignored (suffix of '{self.last_word_typed}')")
         
         return full_text, prompt_text, is_my_turn
 
@@ -395,6 +404,7 @@ class ScreenReader:
                     continue
 
                 self._log(f"SUA VEZ detected! Prompt: '{prompt_text}'")
+                self._last_frame_hash = None  # Reset cache — active turn, always want fresh frames
                 
                 # === TYPE + RETRY LOOP ===
                 retries = 0
@@ -411,7 +421,8 @@ class ScreenReader:
                     # Wait for typing to finish + game to process
                     time.sleep(0.4)
                     
-                    # Re-check: is "SUA VEZ" still showing? Also re-read prompt
+                    # Force fresh capture for retry check (bypass frame cache)
+                    self._last_frame_hash = None
                     _, new_prompt, still_my_turn = self._capture_and_ocr()
                     
                     if not still_my_turn:
@@ -438,65 +449,6 @@ class ScreenReader:
                 logger.error(f"Error in watch loop: {e}")
                 time.sleep(1)
 
-    def _check_turn_indicator(self):
-        if not self.turn_region:
-            return False
-            
-        region = (self.turn_region['x1'], self.turn_region['y1'], 
-                  self.turn_region['width'], self.turn_region['height'])
-        
-        try:
-            monitor = {
-                "top": self.turn_region['y1'],
-                "left": self.turn_region['x1'],
-                "width": self.turn_region['width'],
-                "height": self.turn_region['height']
-            }
-            sct_img = self.sct.grab(monitor)
-            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-            img = img.convert('L')
-            text = pytesseract.image_to_string(img, config='--psm 6').lower()
-            return "turn" in text or "vez" in text
-        except Exception:
-            return False
-
-    def _read_prompt(self):
-        if not self.prompt_region:
-            return None
-            
-        region = (self.prompt_region['x1'], self.prompt_region['y1'], 
-                  self.prompt_region['width'], self.prompt_region['height'])
-                  
-        try:
-            monitor = {
-                "top": self.prompt_region['y1'],
-                "left": self.prompt_region['x1'],
-                "width": self.prompt_region['width'],
-                "height": self.prompt_region['height']
-            }
-            sct_img = self.sct.grab(monitor)
-            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-            img = img.convert('L')
-            text = pytesseract.image_to_string(img, config='--psm 6').strip()
-            
-            lines = text.split('\n')
-            potential_prompts = []
-            
-            for line in lines:
-                clean_line = line.strip().upper()
-                if "VEZ" in clean_line or "TURN" in clean_line or len(clean_line) < 1:
-                    continue
-                alpha_only = ''.join(filter(lambda x: x.isalpha(), clean_line))
-                if len(alpha_only) > 0:
-                    potential_prompts.append(alpha_only)
-            
-            if potential_prompts:
-                return potential_prompts[0]
-                
-            return None
-        except Exception as e:
-            logger.error(f"OCR Error: {e}")
-            return None
 
     def get_state(self):
         return {

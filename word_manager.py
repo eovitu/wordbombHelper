@@ -22,8 +22,13 @@ class WordManager:
                 targets[c] = self.recover_target
         return targets
 
+    @staticmethod
+    def _parse_letter_set(s: str) -> set:
+        """Parses a comma/space-separated letter string into a set of lowercase chars."""
+        return set(s.lower().replace(' ', '').replace(',', '')) if s else set()
+
     def set_recover_config(self, target, exclude_str):
-        exclude_chars = set(exclude_str.lower().replace(' ', '').replace(',', ''))
+        exclude_chars = self._parse_letter_set(exclude_str)
         # If config changed, reset the targets to prevent logic bugs
         if target != self.recover_target or exclude_chars != self.recover_exclude:
             self.recover_target = target
@@ -67,7 +72,7 @@ class WordManager:
         """Returns available sub-list names for the given language."""
         return list(self.sublists.get(lang, {}).keys())
 
-    def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix=''):
+    def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix='', finish_with_letters='', suffix=''):
         """
         Finds a word containing the prompt string or starting with a prefix.
         
@@ -101,10 +106,14 @@ class WordManager:
         data = self.wordlists[lang]
         
         candidates = []
-        if prefix:
-            prefix_lower = prefix.lower()
+        prefix_lower = prefix.lower() if prefix else ''
+        suffix_lower = suffix.lower() if suffix else ''
+        
+        if prefix_lower or suffix_lower:
             for i, word_lower in enumerate(data['lower']):
-                if word_lower.startswith(prefix_lower) and word_lower not in self.used_words:
+                if ((not prefix_lower or word_lower.startswith(prefix_lower)) and 
+                    (not suffix_lower or word_lower.endswith(suffix_lower)) and 
+                    word_lower not in self.used_words):
                     if not has_len_filter or (min_len <= len(word_lower) <= max_len):
                         candidates.append(data['full'][i])
         else:
@@ -117,7 +126,7 @@ class WordManager:
             return None
 
         # Prepare exclude set
-        exclude_chars = set(exclude_letters.lower().replace(' ', '').replace(',', ''))
+        exclude_chars = self._parse_letter_set(exclude_letters)
 
         # Filter out exclude_chars from beginning of words, UNLESS it empties the list
         if exclude_chars:
@@ -125,12 +134,20 @@ class WordManager:
             candidates = filtered if filtered else candidates
 
         # Pre-filter (Starts With):
-        starts_chars = set(starts_with_letters.lower().replace(' ', '').replace(',', ''))
+        starts_chars = self._parse_letter_set(starts_with_letters)
         if starts_chars:
             starts_filtered = [w for w in candidates if w.lower()[0] in starts_chars]
             if starts_filtered:
                 # Only restrict if there are actually matches for the start letter
                 candidates = starts_filtered
+
+        # Pre-filter (Ends With):
+        finish_chars = self._parse_letter_set(finish_with_letters)
+        if finish_chars:
+            finish_filtered = [w for w in candidates if w.lower()[-1] in finish_chars]
+            if finish_filtered:
+                # Only restrict if there are actually matches for the end letter
+                candidates = finish_filtered
 
         # Pre-filter (Priority Length):
         if priority_min_len > 1 or priority_max_len < 46:
@@ -139,7 +156,7 @@ class WordManager:
                 candidates = len_filtered
 
         # Pre-filter: Priority Letters Filtering (Contains)
-        pri_chars = set(priority_letters.lower().replace(' ', '').replace(',', ''))
+        pri_chars = self._parse_letter_set(priority_letters)
         if pri_chars:
             # Score candidates
             scored = []
@@ -169,7 +186,7 @@ class WordManager:
             # Fallback to random if no hyphens
             return random.choice(candidates)
         elif strategy == 'alpha':
-            starts_chars = set(starts_with_letters.lower().replace(' ', '').replace(',', ''))
+            starts_chars = self._parse_letter_set(starts_with_letters)
             
             # If a Starts With letter is being enforced, just return a random candidate and DO NOT advance
             # so we resume the alphabet right where we left off when the priority is removed.

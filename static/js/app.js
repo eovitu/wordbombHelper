@@ -23,6 +23,7 @@ let currentConfig = {
     priority_letters: '',
     exclude_letters: '',
     starts_with_letters: '',
+    finish_with_letters: '',
     recover_target: 2,
     recover_exclude: '',
     priority_sublist: '',
@@ -47,6 +48,13 @@ function setupGlobalShortcuts() {
             case '3':
                 e.preventDefault();
                 switchTab('config');
+                break;
+            case 's':
+            case 'S':
+                e.preventDefault();
+                if (document.getElementById('game-mode-select') && document.getElementById('game-mode-select').value === 'letterlink') {
+                    solveLetterLink();
+                }
                 break;
         }
     });
@@ -101,12 +109,18 @@ function setupEventListeners() {
     bindNumber('priority-max-len', 'priority_max_len', 46);
     bindNumber('recover-target', 'recover_target', 2);
 
-    // Text Selectors
-    ['priority', 'starts-with', 'exclude', 'recover-exclude'].forEach(type => {
-        const input = document.getElementById(type === 'recover-exclude' ? type : `${type}-input`);
-        if(!input) return;
+    // Text filter inputs — explicit map for clarity and maintainability
+    const filterFieldMap = {
+        'priority-input':    'priority_letters',
+        'starts-with-input': 'starts_with_letters',
+        'finish-with-input': 'finish_with_letters',
+        'exclude-input':     'exclude_letters',
+        'recover-exclude':   'recover_exclude'
+    };
+    Object.entries(filterFieldMap).forEach(([id, field]) => {
+        const input = document.getElementById(id);
+        if (!input) return;
         input.addEventListener('input', (e) => {
-            const field = type.replace(/-/g, '_') + (type.includes('exclude') ? (type==='recover-exclude'?'':'_letters') : '_letters');
             currentConfig[field] = e.target.value;
             syncConfigToBackend();
         });
@@ -144,6 +158,27 @@ function setupEventListeners() {
                 const prefix = e.target.value;
                 if (prefix.length > 0) getWord('', prefix);
                 else document.getElementById('current-word').textContent = 'Waiting...';
+            }
+        });
+    }
+
+    // Game Mode Toggle
+    const gameModeSelect = document.getElementById('game-mode-select');
+    if (gameModeSelect) {
+        gameModeSelect.addEventListener('change', (e) => {
+            const mode = e.target.value;
+            const orb = document.getElementById('classic-orb-container');
+            const autoBtn = document.getElementById('autoplay-toggle-btn');
+            const solveBtn = document.getElementById('solve-ll-btn');
+            
+            if (mode === 'letterlink') {
+                if(orb) orb.style.display = 'none';
+                if(autoBtn) autoBtn.style.display = 'none';
+                if(solveBtn) solveBtn.style.display = 'block';
+            } else {
+                if(orb) orb.style.display = 'flex';
+                if(autoBtn) autoBtn.style.display = 'block';
+                if(solveBtn) solveBtn.style.display = 'none';
             }
         });
     }
@@ -333,12 +368,12 @@ function setLanguage(lang, btnElement) {
     syncConfigToBackend();
 }
 
-async function getWord(prompt, prefix = '') {
+async function getWord(prompt, prefix = '', suffix = '') {
     try {
         const response = await fetch('/api/word', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, prefix, ...currentConfig })
+            body: JSON.stringify({ prompt, prefix, suffix, ...currentConfig })
         });
         const data = await response.json();
         const display = document.getElementById('current-word');
@@ -495,4 +530,66 @@ function updateOverlay(msg) {
 function hideOverlay() {
     const overlay = document.getElementById('calibration-overlay');
     if(overlay) overlay.classList.add('hidden');
+}
+
+let lastLLData = null;
+
+function renderLLGrid(matrix, path) {
+    let gridHtml = '<div class="ll-visual-grid">';
+    for (let r = 0; r < 5; r++) {
+        gridHtml += '<div class="ll-row">';
+        for (let c = 0; c < 5; c++) {
+            let stepIndex = path.findIndex(p => p[0] === r && p[1] === c);
+            let content = matrix[r][c];
+            let cellClass = stepIndex >= 0 ? 'll-cell in-path' : 'll-cell';
+            if (content === '.' || content === '-') cellClass += ' empty';
+            let badge = stepIndex >= 0 ? `<div class="step-badge">${stepIndex + 1}</div>` : '';
+            gridHtml += `<div class="${cellClass}">${content}${badge}</div>`;
+        }
+        gridHtml += '</div>';
+    }
+    gridHtml += '</div>';
+    return gridHtml;
+}
+
+function updateLLResultUI(index) {
+    if (!lastLLData) return;
+    const panel = document.getElementById('ll-result-panel');
+    const wordObj = lastLLData.top_words[index];
+    
+    let gridHtml = renderLLGrid(lastLLData.matrix, wordObj.path);
+    let wordListHtml = lastLLData.top_words.map((w, i) => `
+        <div class="ll-word ${i === index ? 'best' : ''}" onclick="updateLLResultUI(${i})">
+            ${i+1}. ${w.word.toUpperCase()} 
+            <span class="ll-len">★ ${w.score} pts</span>
+        </div>
+    `).join('');
+    
+    panel.innerHTML = gridHtml + wordListHtml;
+}
+
+async function solveLetterLink() {
+    logAuto('> Scanning Letter Link grid...');
+    try {
+        const response = await fetch('/api/letterlink/solve', { method: 'POST' });
+        const data = await response.json();
+        if (data.status === 'success') {
+            lastLLData = data;
+            const display = document.getElementById('current-word');
+            if (display) display.textContent = data.word.toUpperCase();
+
+            logAuto(`✅ BEST: ${data.word.toUpperCase()} (${data.score} pts)`);
+            
+            const panel = document.getElementById('ll-result-panel');
+            if (panel) {
+                panel.style.display = 'block';
+                updateLLResultUI(0);
+            }
+        } else {
+            logAuto(`>> Error: ${data.message}`);
+        }
+    } catch (e) {
+        console.error(e);
+        logAuto('>> Network error requesting solve.');
+    }
 }

@@ -1,8 +1,11 @@
 from flask import Flask, render_template, request, jsonify
 import os
+import numpy as np
 from word_manager import WordManager
 from typer import Typer
 from screen_reader import ScreenReader
+from grid_reader import GridReader
+from letter_link_solver import LetterLinkSolver
 import threading
 import logging
 import json
@@ -14,6 +17,25 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 wm = WordManager()
 typer = Typer()
+grid_reader = GridReader()
+ll_solver = LetterLinkSolver()
+
+# Update Trie when wordlist finishes loading inside wm?
+def build_trie_bg(lang=None):
+    if lang is None:
+        lang = wm.current_language
+    
+    if lang not in wm.wordlists:
+        logger.error(f"Language '{lang}' not found in wordlists!")
+        return
+    
+    wordlist = wm.wordlists[lang]['full']
+    logger.info(f"Building Letter Link Trie from {lang} ({len(wordlist)} words)...")
+    count = ll_solver.build_trie_from_list(wordlist)
+    logger.info(f"Trie complete: {count} words indexed for Letter Link.")
+
+# Store LetterLink calibration
+ll_grid_region = None
 
 # --- Auto-Play Config (synced from frontend) ---
 autoplay_config = {
@@ -33,6 +55,7 @@ autoplay_config = {
     'priority_letters': '',
     'exclude_letters': '',
     'starts_with_letters': '',
+    'finish_with_letters': '',
     'recover_target': 2,
     'recover_exclude': '',
     'priority_sublist': '',
@@ -43,6 +66,7 @@ autoplay_config = {
 # Store auto-play log messages for frontend polling
 autoplay_logs = []
 autoplay_logs_lock = threading.Lock()
+autoplay_config_lock = threading.Lock()  # Protects autoplay_config against concurrent read/write
 
 def add_autoplay_log(msg):
     with autoplay_logs_lock:
@@ -60,31 +84,36 @@ def on_prompt_found(prompt_text):
     logger.info(f"Auto-Play: Found prompt '{prompt_text}'")
     add_autoplay_log(f"Prompt: '{prompt_text}'")
     
-    # Use the synced config from frontend
-    lang = autoplay_config['lang']
-    min_len = autoplay_config['min_len']
-    max_len = autoplay_config['max_len']
-    strategy = autoplay_config['strategy']
-    priority_letters = autoplay_config.get('priority_letters', '')
-    exclude_letters = autoplay_config.get('exclude_letters', '')
-    starts_with_letters = autoplay_config.get('starts_with_letters', '')
-    priority_min_len = int(autoplay_config.get('priority_min_len', 1))
-    priority_max_len = int(autoplay_config.get('priority_max_len', 46))
-    wpm = autoplay_config['wpm']
-    error_rate = autoplay_config['error_rate']
+    # Thread-safe snapshot of config (Flask thread writes, ScreenReader thread reads)
+    with autoplay_config_lock:
+        config = dict(autoplay_config)
+    
+    lang = config['lang']
+    min_len = config['min_len']
+    max_len = config['max_len']
+    strategy = config['strategy']
+    priority_letters = config.get('priority_letters', '')
+    exclude_letters = config.get('exclude_letters', '')
+    starts_with_letters = config.get('starts_with_letters', '')
+    finish_with_letters = config.get('finish_with_letters', '')
+    priority_min_len = int(config.get('priority_min_len', 1))
+    priority_max_len = int(config.get('priority_max_len', 46))
+    wpm = config['wpm']
+    error_rate = config['error_rate']
     
     # Configure recovery logic before getting word
-    rec_target = int(autoplay_config.get('recover_target', 2))
-    rec_exclude = autoplay_config.get('recover_exclude', '')
+    rec_target = int(config.get('recover_target', 2))
+    rec_exclude = config.get('recover_exclude', '')
     wm.set_recover_config(rec_target, rec_exclude)
     
     word = wm.get_word(prompt_text, lang, min_len, max_len, strategy,
                        priority_letters=priority_letters,
                        exclude_letters=exclude_letters,
                        starts_with_letters=starts_with_letters,
+                       finish_with_letters=finish_with_letters,
                        priority_min_len=priority_min_len,
                        priority_max_len=priority_max_len,
-                       priority_sublist=autoplay_config.get('priority_sublist', ''))
+                       priority_sublist=config.get('priority_sublist', ''))
     if word:
         wm.mark_used(word)
         logger.info(f"Auto-Play: Typing word '{word}'")
@@ -94,24 +123,19 @@ def on_prompt_found(prompt_text):
         typer.type_word(
             word, wpm, error_rate, 
             auto_tab=False, 
-            hesitation_prob=autoplay_config['hesitation_prob'],
-            retry_rate=autoplay_config['retry_rate'],
-            late_error_rate=autoplay_config['late_error_rate'],
-            max_typos=autoplay_config['max_typos'],
-            max_late_errors=autoplay_config['max_late_errors'],
-            delayed_type=autoplay_config.get('delayed_type', False),
-            add_period_prob=float(autoplay_config.get('add_period_prob', 0.0))
+            hesitation_prob=config['hesitation_prob'],
+            retry_rate=config['retry_rate'],
+            late_error_rate=config['late_error_rate'],
+            max_typos=config['max_typos'],
+            max_late_errors=config['max_late_errors'],
+            delayed_type=config.get('delayed_type', False),
+            add_period_prob=float(config.get('add_period_prob', 0.0))
         )
         # Track last word typed to avoid "ghost prompt" hallucinations
         screen_reader.last_word_typed = word
         
-        # Wait for typing to finish before returning
-        import time
-        timeout = 5
-        waited = 0
-        while typer.is_typing and waited < timeout:
-            time.sleep(0.05)
-            waited += 0.05
+        # Wait for typing to complete using event (no busy-wait)
+        typer.done_event.wait(timeout=5)
         
         return True
     else:
@@ -149,6 +173,7 @@ def get_word():
     priority_letters = data.get('priority_letters', '')
     exclude_letters = data.get('exclude_letters', '')
     starts_with_letters = data.get('starts_with_letters', '')
+    finish_with_letters = data.get('finish_with_letters', '')
     priority_min_len = int(data.get('priority_min_len', 1))
     priority_max_len = int(data.get('priority_max_len', 46))
     auto_type = data.get('auto_type', False)
@@ -161,16 +186,19 @@ def get_word():
     rec_target = int(data.get('recover_target', 2))
     rec_exclude = data.get('recover_exclude', '')
     prefix = data.get('prefix', '')
+    suffix = data.get('suffix', '')
     wm.set_recover_config(rec_target, rec_exclude)
 
     word = wm.get_word(prompt, lang, min_len, max_len, strategy,
                        priority_letters=priority_letters,
                        exclude_letters=exclude_letters,
                        starts_with_letters=starts_with_letters,
+                       finish_with_letters=finish_with_letters,
                        priority_min_len=priority_min_len,
                        priority_max_len=priority_max_len,
                        priority_sublist=priority_sublist,
-                       prefix=prefix)
+                       prefix=prefix,
+                       suffix=suffix)
     
     if word:
         wm.mark_used(word)
@@ -202,6 +230,7 @@ def get_word():
 def reset_words():
     wm.reset_used()
     wm.load_wordlists()
+    threading.Thread(target=build_trie_bg).start()
     return jsonify({'status': 'success'})
 
 # --- Screen Reader / Auto-Play Routes ---
@@ -216,8 +245,58 @@ def calibration_click():
     data = request.json
     x = data.get('x')
     y = data.get('y')
+    mode = data.get('mode', 'classic') # 'classic' or 'letterlink'
+    
+    # Let screen_reader handle the click logic for both since it's just rectangle coordinates
     result = screen_reader.handle_calibration_click(x, y)
+    
+    if result.get('status') == 'done':
+        # If letterlink, steal the region for grid
+        if mode == 'letterlink':
+            global ll_grid_region
+            ll_grid_region = result['regions']['turn_region']
+            result['message'] = "Letter Link Grid Calibrated!"
+            
     return jsonify(result)
+
+@app.route('/api/letterlink/solve', methods=['POST'])
+def solve_letter_link():
+    try:
+        global ll_grid_region
+        region = ll_grid_region or screen_reader.turn_region
+        if not region:
+            return jsonify({'status': 'error', 'message': 'Calibrate grid first'})
+            
+        # Read grid
+        matrix, coords = grid_reader.read_grid(region)
+        if not matrix:
+            return jsonify({'status': 'error', 'message': 'Failed to read grid. Check Tesseract.'})
+        
+        logger.info(f"Grid read: {np.array(matrix)}")
+            
+        # ALWAYS rebuild Trie for Portuguese to ensure fresh wordlist
+        logger.info("Building fresh Trie for Portuguese...")
+        build_trie_bg(lang='Portuguese')
+            
+        # Solve — return top 5 highest scoring words for the user to read
+        logger.info(f"Solving grid with Trie (root has {len(ll_solver.trie.root.children)} children)...")
+        results = ll_solver.solve_grid(matrix)
+        logger.info(f"Found {len(results)} words total")
+        
+        if not results:
+            return jsonify({'status': 'error', 'message': 'No words found in Portuguese wordlist. Check grid OCR!'})
+        
+        top_words = [{'word': word, 'score': score, 'path': path} for word, path, score in results[:5]]
+        best_word = top_words[0]
+        
+        logger.info(f"Letter Link -> Best: '{best_word['word']}' ({best_word['score']} pts)")
+        top_5_words = ', '.join(f"{w['word']}({w['score']}pts)" for w in top_words)
+        logger.info(f"Top 5: {top_5_words}")
+        
+        return jsonify({'status': 'success', 'word': best_word['word'], 'score': best_word['score'], 'top_words': top_words, 'matrix': matrix})
+    except Exception as e:
+        logger.error(f"Error in solve_letter_link: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"Internal Error: {str(e)}"}), 500
 
 @app.route('/api/autoplay/toggle', methods=['POST'])
 def toggle_autoplay():
@@ -251,51 +330,54 @@ def get_autoplay_status():
 def update_autoplay_config():
     """Sync config from frontend to auto-play backend."""
     data = request.json
-    if 'lang' in data:
-        autoplay_config['lang'] = data['lang']
-    if 'min_len' in data:
-        autoplay_config['min_len'] = int(data['min_len'])
-    if 'max_len' in data:
-        autoplay_config['max_len'] = int(data['max_len'])
-    if 'strategy' in data:
-        autoplay_config['strategy'] = data['strategy']
-    if 'wpm' in data:
-        autoplay_config['wpm'] = int(data['wpm'])
-    if 'error_rate' in data:
-        autoplay_config['error_rate'] = float(data['error_rate'])
-    if 'hesitation_prob' in data:
-        autoplay_config['hesitation_prob'] = float(data['hesitation_prob'])
-    if 'retry_rate' in data:
-        autoplay_config['retry_rate'] = float(data['retry_rate'])
-    if 'late_error_rate' in data:
-        autoplay_config['late_error_rate'] = float(data['late_error_rate'])
-    if 'max_typos' in data:
-        autoplay_config['max_typos'] = int(data['max_typos'])
-    if 'max_late_errors' in data:
-        autoplay_config['max_late_errors'] = int(data['max_late_errors'])
-    if 'priority_min_len' in data:
-        autoplay_config['priority_min_len'] = int(data['priority_min_len'])
-    if 'priority_max_len' in data:
-        autoplay_config['priority_max_len'] = int(data['priority_max_len'])
-    if 'priority_letters' in data:
-        autoplay_config['priority_letters'] = data['priority_letters']
-    if 'exclude_letters' in data:
-        autoplay_config['exclude_letters'] = data['exclude_letters']
-    if 'starts_with_letters' in data:
-        autoplay_config['starts_with_letters'] = data['starts_with_letters']
-    if 'recover_target' in data:
-        autoplay_config['recover_target'] = int(data['recover_target'])
-    if 'recover_exclude' in data:
-        autoplay_config['recover_exclude'] = data['recover_exclude']
-    if 'priority_sublist' in data:
-        autoplay_config['priority_sublist'] = data['priority_sublist']
-    if 'delayed_type' in data:
-        autoplay_config['delayed_type'] = bool(data['delayed_type'])
-    if 'add_period_prob' in data:
-        autoplay_config['add_period_prob'] = float(data['add_period_prob'])
-    
-    logger.info(f"Auto-Play config updated: {autoplay_config}")
-    return jsonify({"status": "ok", "config": autoplay_config})
+    with autoplay_config_lock:
+        if 'lang' in data:
+            autoplay_config['lang'] = data['lang']
+        if 'min_len' in data:
+            autoplay_config['min_len'] = int(data['min_len'])
+        if 'max_len' in data:
+            autoplay_config['max_len'] = int(data['max_len'])
+        if 'strategy' in data:
+            autoplay_config['strategy'] = data['strategy']
+        if 'wpm' in data:
+            autoplay_config['wpm'] = int(data['wpm'])
+        if 'error_rate' in data:
+            autoplay_config['error_rate'] = float(data['error_rate'])
+        if 'hesitation_prob' in data:
+            autoplay_config['hesitation_prob'] = float(data['hesitation_prob'])
+        if 'retry_rate' in data:
+            autoplay_config['retry_rate'] = float(data['retry_rate'])
+        if 'late_error_rate' in data:
+            autoplay_config['late_error_rate'] = float(data['late_error_rate'])
+        if 'max_typos' in data:
+            autoplay_config['max_typos'] = int(data['max_typos'])
+        if 'max_late_errors' in data:
+            autoplay_config['max_late_errors'] = int(data['max_late_errors'])
+        if 'priority_min_len' in data:
+            autoplay_config['priority_min_len'] = int(data['priority_min_len'])
+        if 'priority_max_len' in data:
+            autoplay_config['priority_max_len'] = int(data['priority_max_len'])
+        if 'priority_letters' in data:
+            autoplay_config['priority_letters'] = data['priority_letters']
+        if 'exclude_letters' in data:
+            autoplay_config['exclude_letters'] = data['exclude_letters']
+        if 'starts_with_letters' in data:
+            autoplay_config['starts_with_letters'] = data['starts_with_letters']
+        if 'finish_with_letters' in data:
+            autoplay_config['finish_with_letters'] = data['finish_with_letters']
+        if 'recover_target' in data:
+            autoplay_config['recover_target'] = int(data['recover_target'])
+        if 'recover_exclude' in data:
+            autoplay_config['recover_exclude'] = data['recover_exclude']
+        if 'priority_sublist' in data:
+            autoplay_config['priority_sublist'] = data['priority_sublist']
+        if 'delayed_type' in data:
+            autoplay_config['delayed_type'] = bool(data['delayed_type'])
+        if 'add_period_prob' in data:
+            autoplay_config['add_period_prob'] = float(data['add_period_prob'])
+        
+        logger.info(f"Auto-Play config updated: {autoplay_config}")
+        return jsonify({"status": "ok", "config": autoplay_config})
 
 # --- Preset Management ---
 
@@ -355,6 +437,9 @@ def run_flask():
     app.run(debug=False, port=5000, use_reloader=False)
 
 if __name__ == '__main__':
+    # Initial Trie build on boot
+    threading.Thread(target=build_trie_bg).start()
+
     # Start Flask in a separate thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
@@ -371,5 +456,8 @@ if __name__ == '__main__':
         if screen_reader:
             screen_reader.prompt_region = region
             screen_reader.turn_region = region
+            # Also update letter link region just in case they drag it manually
+            global ll_grid_region
+            ll_grid_region = region
 
     run_overlay(on_overlay_move)

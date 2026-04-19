@@ -2894,7 +2894,6 @@ araras-vermelhas
 aratu
 arawete
 arawetes
-araza
 arbitra
 arbitras
 arbitro
@@ -3869,8 +3868,7 @@ ayran
 ayurveda
 ayuujk
 ayuujkes
-aza
-azado
+azar
 azale
 azawakh
 azawakhs
@@ -5865,8 +5863,6 @@ cadeados
 cadeia
 cadeira
 cadeiras
-caderna
-cadernas
 caderno
 cadernos
 caem
@@ -8555,7 +8551,6 @@ consentisses
 consentiste
 consentistes
 consentiu
-consento
 consequencia
 consoarieis
 consola
@@ -11684,7 +11679,6 @@ diziam
 diziamos
 dizias
 dizimaveis
-dizo
 do
 do-re-mi
 do-re-mis
@@ -13618,7 +13612,7 @@ espeto
 espetou
 espevite
 espiao
-espiaos
+espioes
 espiga
 espigas
 espinafradas
@@ -15678,9 +15672,6 @@ fugas
 fugazmente
 fugazzeta
 fugazzette
-fuge
-fugem
-fuges
 fugi
 fugia
 fugiam
@@ -18049,19 +18040,6 @@ interrompiam
 interrompiamos
 interrompias
 interseccionalidades
-interva
-intervam
-intervamos
-intervas
-interve
-intervem
-interves
-intervi
-intervia
-interviam
-interviamos
-intervias
-intervimos
 intervir
 intervira
 interviram
@@ -18570,11 +18548,10 @@ jogava
 jogavam
 jogavamos
 jogavas
-joge
-jogei
-jogem
-jogemos
-joges
+jogue
+joguei
+joguem
+jogues
 jogging
 joggings
 jogo
@@ -22162,7 +22139,6 @@ nylon
 nylons
 nyotaimori
 o'odham
-o-odham
 ob-roga
 ob-rogacao
 ob-rogada
@@ -23105,7 +23081,6 @@ pareciam
 pareciamos
 parecias
 pareco
-parecou
 parei
 parem
 paremos
@@ -24447,11 +24422,7 @@ praticava
 praticavam
 praticavamos
 praticavas
-pratice
-praticei
-praticem
-praticemos
-pratices
+
 pratico
 praticou
 pratyahara
@@ -26710,6 +26681,14 @@ roentgen
 roentgenio
 roentgenios
 roentgens
+EX-QUADRO
+EX-QUADROS
+EX-QUARTERBACK
+EX-QUARTERBACKS
+EX-QUIMICA
+EX-QUIMICO
+EX-QUIMICOS
+EX-QUIMICAS
 roentgenterapia
 roentgenterapias
 roentgenterrapia
@@ -28692,6 +28671,7 @@ teletransportariamos
 teletransportassemos
 telpochcalli
 tem
+tem-te-la
 tem-farinha-ai
 tema
 temaki
@@ -29393,9 +29373,6 @@ trazer
 trazera
 trazeram
 trazerao
-trazeriam
-trazeriamos
-trazerias
 trazermos
 trazes
 trazesse
@@ -29532,7 +29509,6 @@ trotskismos
 trotskista
 trotskistas
 trouxeste
-trovejemo
 trovejemos
 truoes
 trutas
@@ -30612,7 +30588,6 @@ walkie-talkies
 walkman
 walkover
 walkovers
-wall-ferrazens
 wall-ferrazense
 wall-ferrazenses
 wallabies

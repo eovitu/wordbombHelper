@@ -1,5 +1,6 @@
 import time
 import random
+import logging
 import pyautogui
 import threading
 import keyboard
@@ -7,6 +8,8 @@ import keyboard
 # Fail-safe: Move mouse to upper-left corner to abort
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.001 # Minimize default pause between actions
+
+logger = logging.getLogger(__name__)
 
 # QWERTY Proximity Map for realistic typos (Narrowed down for ultra-realism)
 QWERTY_MAP = {
@@ -29,6 +32,11 @@ class Typer:
     def __init__(self):
         self.is_typing = False
         self._abort = False
+        # Lock to prevent concurrent typing (thread-safe, non-blocking acquire)
+        self._lock = threading.Lock()
+        # Event set when typing is done — lets callers wait without busy-loops
+        self.done_event = threading.Event()
+        self.done_event.set()  # Initially "done" (not typing)
         # Tecla de atalho global para cancelar a digitação
         keyboard.on_press_key('insert', self._on_insert_pressed)
 
@@ -55,10 +63,11 @@ class Typer:
         :param delayed_type: If True, types noise, presses enter, waits, then types the word very fast.
         :param add_period_prob: Probability of adding a period at the end of the word.
         """
-        if self.is_typing:
-            return
+        if not self._lock.acquire(blocking=False):
+            return  # Already typing — ignore duplicate call
         
         self.is_typing = True
+        self.done_event.clear()  # Mark as busy
         
         kwargs = {
             'retry_rate': retry_rate,
@@ -113,7 +122,8 @@ class Typer:
                 self._human_type(word, slow_wpm, error_rate, hesitation_prob, late_error_rate, max_typos, max_late_errors)
                 
                 if self._abort: return
-                time.sleep(abs(random.gauss(0.1, 0.05)))
+                # Variable pre-enter delay scaled by word length (longer words = more mental review)
+                self._pre_enter_delay(word)
                 pyautogui.press('enter')
 
             else:
@@ -148,7 +158,7 @@ class Typer:
                     faster_wpm = wpm * random.uniform(1.2, 1.5)
                     lower_err = error_rate * 0.2
                     self._human_type(word, faster_wpm, lower_err, hesitation_prob * 0.5, late_error_rate=0.0, max_typos=1, max_late_errors=0)
-                    time.sleep(abs(random.gauss(0.1, 0.05)))
+                    self._pre_enter_delay(word)
                     pyautogui.press('enter')
 
                 else:
@@ -156,7 +166,7 @@ class Typer:
                     
                     if self._abort: return
                     
-                    time.sleep(abs(random.gauss(0.1, 0.05)))
+                    self._pre_enter_delay(word)
                     pyautogui.press('enter')
 
             if return_tab and not self._abort:
@@ -167,10 +177,12 @@ class Typer:
                 pyautogui.keyUp('alt')
                 
         except Exception as e:
-            print(f"Typing error: {e}")
+            logger.error(f"Typing error: {e}")
         finally:
             self.is_typing = False
             self._abort = False
+            self.done_event.set()   # Signal waiting callers that typing is complete
+            self._lock.release()    # Release the typing lock
 
     def _get_typo_char(self, char):
         c_lower = char.lower()
@@ -227,10 +239,14 @@ class Typer:
                             time.sleep(abs(random.gauss(0.15, 0.04)))
                             in_burst = False
                 
-                # Mid-word hesitation / Loss of train of thought
-                if i > 0 and random.random() < hesitation_prob:
+                # Mid-word hesitation — weighted by position (more likely early in word, tapers off)
+                # Rationale: humans hesitate more when "thinking ahead", less at the end (momentum)
+                position_factor = 1.0 - (i / max(1, len(word))) * 0.5  # 1.0 at start -> 0.5 at end
+                if i > 0 and random.random() < hesitation_prob * position_factor:
                     time.sleep(abs(random.gauss(0.6, 0.2)))
                     in_burst = False
+                    # Post-hesitation momentum: briefly type faster (like "remembered and accelerated")
+                    current_speed_modifier = max(0.55, current_speed_modifier * 0.72)
 
             # --- 2. BURST & SPEED CALCULATION ---
             if not in_burst and random.random() < 0.35: 
@@ -252,8 +268,12 @@ class Typer:
                 delay *= (1.0 + float(recovery_penalty))
                 recovery_penalty = max(0.0, float(recovery_penalty) - 0.15)
             
-            variation = delay * (0.05 if turbo else 0.25)
-            final_delay = abs(random.gauss(delay, variation))
+            # Turbo mode: skip random.gauss overhead at very high WPM — delay is already tiny
+            if turbo:
+                final_delay = delay
+            else:
+                variation = delay * 0.25
+                final_delay = abs(random.gauss(delay, variation))
 
             # --- 3. ERROR LOGIC & KEYSTROKE ---
             
@@ -343,6 +363,15 @@ class Typer:
             
             i += 1
 
+    def _pre_enter_delay(self, word: str):
+        """
+        Pauses before pressing Enter. Scales with word length to simulate
+        mental review: longer words get a slightly longer confirmation pause.
+        ~60ms for 4-char words, ~110ms for 14-char words.
+        """
+        base_pause = 0.05 + len(word) * 0.004
+        time.sleep(abs(random.gauss(base_pause, 0.03)))
+
     def _make_typo(self, word):
         # Create a realistic "wrong" version of the word for the full retry scenario
         if len(word) < 2:
@@ -362,3 +391,41 @@ class Typer:
             # Replace a char with a proximity one
             idx = random.randint(0, len(word)-1)
             return word[:idx] + self._get_typo_char(word[idx]) + word[idx+1:]
+
+    def drag_path(self, coords_list):
+        """
+        Simulates dragging the mouse across a list of (x, y) coordinates.
+        Used for Letter Link "cobrinha" game mode.
+        """
+        if not coords_list or len(coords_list) < 2:
+            return
+            
+        # Alt+Tab to focus the game window if needed (handled externally or we can do it here)
+        # But usually we just focus the mouse.
+        
+        start_x, start_y = coords_list[0]
+        
+        # Add slight randomness to click location
+        sx = start_x + random.randint(-4, 4)
+        sy = start_y + random.randint(-4, 4)
+        
+        pyautogui.moveTo(sx, sy, duration=0.15)
+        time.sleep(0.05)
+        pyautogui.mouseDown()
+        
+        for x, y in coords_list[1:]:
+            if self._abort:
+                break
+                
+            dx = x + random.randint(-4, 4)
+            dy = y + random.randint(-4, 4)
+            
+            # Smoothly transition to the next block
+            pyautogui.moveTo(dx, dy, duration=random.uniform(0.06, 0.12))
+            
+        time.sleep(0.05)
+        pyautogui.mouseUp()
+        
+        # Move mouse out of the way slightly
+        pyautogui.moveRel(0, 30, duration=0.1)
+

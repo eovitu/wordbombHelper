@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# OCR debug artifacts
+debug_screenshots/*.png
+debug_screenshots/*.jpg
+debug_screenshots/*.jpeg
+debug_screenshots/*.webp
+debug_screenshots/*.bmp
+
+# Local editor settings
+.vscode/
