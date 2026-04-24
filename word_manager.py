@@ -15,7 +15,7 @@ class WordManager:
         self.recover_target = 2
         self.recover_exclude = set()
         self.letter_targets = self._build_initial_targets()
-        self.current_language = 'English'
+        self.current_language = 'Inglês'
         self.current_alpha_char = 'a'
         self.load_wordlists()
 
@@ -31,6 +31,40 @@ class WordManager:
     def _parse_letter_set(s: str) -> set:
         """Parses a comma/space-separated letter string into a set of lowercase chars."""
         return set(s.lower().replace(' ', '').replace(',', '')) if s else set()
+
+    @staticmethod
+    def _normalize_language_name(name: str) -> str:
+        """Normalizes language names for accent/case-insensitive matching."""
+        if not name:
+            return ''
+        normalized = unicodedata.normalize('NFD', str(name).strip().lower())
+        return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+
+    def _resolve_language_name(self, lang: str) -> str:
+        """Resolves configured language name to an available wordlist key."""
+        if lang in self.wordlists:
+            return lang
+
+        normalized_lang = self._normalize_language_name(lang)
+        if not normalized_lang:
+            return lang
+
+        normalized_map = {
+            self._normalize_language_name(key): key
+            for key in self.wordlists.keys()
+        }
+
+        if normalized_lang in normalized_map:
+            return normalized_map[normalized_lang]
+
+        aliases = {
+            'portuguese': 'portugues',
+        }
+        alias_target = aliases.get(normalized_lang)
+        if alias_target and alias_target in normalized_map:
+            return normalized_map[alias_target]
+
+        return lang
 
     def set_recover_config(self, target, exclude_str):
         exclude_chars = self._parse_letter_set(exclude_str)
@@ -76,7 +110,8 @@ class WordManager:
 
     def get_sublists(self, lang):
         """Returns available sub-list names for the given language."""
-        return list(self.sublists.get(lang, {}).keys())
+        resolved_lang = self._resolve_language_name(lang)
+        return list(self.sublists.get(resolved_lang, {}).keys())
 
     def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix='', finish_with_letters='', suffix=''):
         """
@@ -85,6 +120,7 @@ class WordManager:
         strategies: 'random', 'shortest', 'longest', 'hyphen', 'alpha', 'recover'
         """
         with self._lock:
+            lang = self._resolve_language_name(lang)
             if lang not in self.wordlists:
                 return None
 

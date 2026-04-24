@@ -65,8 +65,8 @@ def is_special(word):
             
     return False
 
-portuguese_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Portuguese.txt'
-palindromos_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Portuguese_palindromos.txt'
+portuguese_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Português.txt'
+palindromos_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Português_palindromos.txt'
 
 with open(portuguese_file, 'r', encoding='utf-8') as f:
     words = [line.strip() for line in f if line.strip()]

@@ -46,7 +46,7 @@
         "add_period_prob": 0.0
     },
     "novo": {
-        "lang": "Portuguese",
+        "lang": "Português",
         "min_len": 1,
         "max_len": 46,
         "priority_min_len": 1,

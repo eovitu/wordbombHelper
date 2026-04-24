@@ -19,10 +19,10 @@ import sys
 BASE_URL = "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018"
 
 LANGUAGES = {
-    "Danish":   ("da", "da_50k.txt"),
-    "Norwegian": ("no", "no_50k.txt"),
-    "Polish":   ("pl", "pl_50k.txt"),
-    "Russian":  ("ru", "ru_50k.txt"),
+    "Dinamarquês": ("da", "da_50k.txt"),
+    "Norueguês": ("no", "no_50k.txt"),
+    "Polonês":   ("pl", "pl_50k.txt"),
+    "Russo":     ("ru", "ru_50k.txt"),
 }
 
 WORDLIST_DIR = os.path.join(os.path.dirname(__file__), "wordlists")

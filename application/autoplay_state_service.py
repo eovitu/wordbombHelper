@@ -6,7 +6,7 @@ from shared.parsing import to_float, to_int
 class AutoplayStateService:
     def __init__(self):
         self.config = {
-            "lang": "Portuguese",
+            "lang": "Português",
             "min_len": 1,
             "max_len": 46,
             "strategy": "random",

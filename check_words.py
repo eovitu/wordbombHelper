@@ -1,5 +1,5 @@
 """
-Detecta palavras provavelmente erradas na lista de Portuguese.txt.
+Detecta palavras provavelmente erradas na lista de Português.txt.
 
 Critérios usados (conservadores — só flagga erros claros):
 1. Sequências de consoantes impossíveis em português
@@ -10,7 +10,7 @@ Critérios usados (conservadores — só flagga erros claros):
 import re
 from collections import defaultdict
 
-with open(r'wordlists\Portuguese.txt', 'r', encoding='utf-8') as f:
+with open(r'wordlists\Português.txt', 'r', encoding='utf-8') as f:
     words = [line.strip() for line in f if line.strip()]
 
 word_set_lower = set(w.lower() for w in words)
@@ -97,7 +97,7 @@ impossible_doubles = [w for w in words if has_impossible_double(w.lower())]
 output_lines = []
 
 output_lines.append('=' * 70)
-output_lines.append('RELATÓRIO DE PALAVRAS SUSPEITAS — Portuguese.txt')
+output_lines.append('RELATÓRIO DE PALAVRAS SUSPEITAS — Português.txt')
 output_lines.append('=' * 70)
 output_lines.append('')
 

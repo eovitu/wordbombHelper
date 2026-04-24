@@ -23,10 +23,10 @@ class LetterLinkService:
 
         logger.info("Grid read: %s", np.array(matrix))
 
-        logger.info("Fetching cached Trie for Portuguese...")
-        solver = self.solver_cache.get_or_build_solver("Portuguese")
+        logger.info("Fetching cached Trie for Portugues...")
+        solver = self.solver_cache.get_or_build_solver("Portugues")
         if not solver:
-            return {"status": "error", "message": "Failed to initialize Portuguese Trie"}, 500
+            return {"status": "error", "message": "Failed to initialize Portuguese trie"}, 500
 
         logger.info("Solving grid with Trie (root has %s children)...", len(solver.trie.root.children))
         results = solver.solve_grid(matrix)

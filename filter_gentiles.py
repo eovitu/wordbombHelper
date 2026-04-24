@@ -106,8 +106,8 @@ def is_gentile(word):
             
     return False
 
-portuguese_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Portuguese.txt'
-palindromos_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Portuguese_palindromos.txt'
+portuguese_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Português.txt'
+palindromos_file = r'c:\Users\vitu\Documents\wordbomb\wordlists\Português_palindromos.txt'
 
 if not os.path.exists(portuguese_file):
     print(f"File not found: {portuguese_file}")

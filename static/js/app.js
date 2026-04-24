@@ -6,7 +6,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 let currentConfig = {
-    lang: 'Portuguese',
+    lang: 'Português',
     min_len: 1,
     max_len: 46,
     priority_min_len: 1,

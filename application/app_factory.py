@@ -45,7 +45,9 @@ class AppContext:
 
 
 def create_app():
-    app = Flask(__name__)
+    template_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "templates"))
+    static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+    app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
     word_manager = WordManager()
     typer = Typer()
