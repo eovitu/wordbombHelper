@@ -113,7 +113,6 @@ def create_api_blueprint(deps):
     def update_autoplay_config():
         data = json_or_empty()
         cfg = autoplay_state.update_from_payload(data)
-        logger.info("Auto-Play config updated: %s", cfg)
         return jsonify({"status": "ok", "config": cfg})
 
     @bp.route("/api/presets", methods=["GET"])

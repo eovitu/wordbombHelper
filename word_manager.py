@@ -9,15 +9,23 @@ logger = logging.getLogger(__name__)
 class WordManager:
     def __init__(self, wordlist_dir='wordlists'):
         self._lock = threading.RLock()
-        self.wordlist_dir = wordlist_dir
+        # Use absolute path relative to this file to ensure wordlists are found regardless of CWD
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        if wordlist_dir == 'wordlists':
+            self.wordlist_dir = os.path.join(base_dir, 'wordlists')
+        else:
+            self.wordlist_dir = wordlist_dir
+            
         self.wordlists = {}
+        self.sublists = {}
         self.used_words = set()
         self.recover_target = 2
         self.recover_exclude = set()
         self.letter_targets = self._build_initial_targets()
         self.current_language = 'Inglês'
         self.current_alpha_char = 'a'
-        self.load_wordlists()
+        # Cache for resolved language names to avoid repeated normalization
+        self._lang_cache = {}
 
     def _build_initial_targets(self):
         targets = {}
@@ -42,7 +50,11 @@ class WordManager:
 
     def _resolve_language_name(self, lang: str) -> str:
         """Resolves configured language name to an available wordlist key."""
+        if lang in self._lang_cache:
+            return self._lang_cache[lang]
+
         if lang in self.wordlists:
+            self._lang_cache[lang] = lang
             return lang
 
         normalized_lang = self._normalize_language_name(lang)
@@ -62,8 +74,11 @@ class WordManager:
         }
         alias_target = aliases.get(normalized_lang)
         if alias_target and alias_target in normalized_map:
-            return normalized_map[alias_target]
+            res = normalized_map[alias_target]
+            self._lang_cache[lang] = res
+            return res
 
+        self._lang_cache[lang] = lang
         return lang
 
     def set_recover_config(self, target, exclude_str):
@@ -74,44 +89,61 @@ class WordManager:
             self.recover_exclude = exclude_chars
             self.letter_targets = self._build_initial_targets()
 
-    def load_wordlists(self):
-        """Loads wordlists from the specified directory.
+    def _load_language(self, lang):
+        """Loads wordlists for a specific language from the specified directory.
         
         Files named 'Language.txt' are main wordlists.
         Files named 'Language_subname.txt' are sub-lists of 'Language'.
+        Acquires lock internally.
         """
         with self._lock:
-            self.wordlists = {} # Clear existing lists before loading
-            self.sublists = {}  # { 'Portuguese': { 'palindromos': {full, lower}, ... } }
-            if not os.path.exists(self.wordlist_dir):
-                os.makedirs(self.wordlist_dir)
-                return
+            self._load_language_unsafe(lang)
 
-            for filename in os.listdir(self.wordlist_dir):
-                if filename.endswith('.txt'):
-                    name = filename[:-4]  # remove .txt
-                    try:
-                        with open(os.path.join(self.wordlist_dir, filename), 'r', encoding='utf-8') as f:
-                            words = [line.strip() for line in f if line.strip()]
-                            words_lower = [w.lower() for w in words]
-                            data = {'full': words, 'lower': words_lower}
+    def _load_language_unsafe(self, lang):
+        """Internal: Assumes lock is already held. Loads wordlists for a language."""
+        if not os.path.exists(self.wordlist_dir):
+            os.makedirs(self.wordlist_dir)
+            return
 
-                        if '_' in name:
-                            # Sub-list: e.g. 'Portuguese_palindromos' -> lang='Portuguese', sub='palindromos'
-                            parts = name.split('_', 1)
-                            lang, sub = parts[0], parts[1]
+        for filename in os.listdir(self.wordlist_dir):
+            if filename.endswith('.txt'):
+                name = filename[:-4]  # remove .txt
+                try:
+                    with open(os.path.join(self.wordlist_dir, filename), 'r', encoding='utf-8') as f:
+                        words = [line.strip() for line in f if line.strip()]
+                        words_lower = [w.lower() for w in words]
+                        
+                        # Build length index for faster filtering
+                        len_map = {}
+                        for i, w_low in enumerate(words_lower):
+                            l = len(w_low)
+                            if l not in len_map:
+                                len_map[l] = []
+                            len_map[l].append(i)
+                            
+                        data = {'full': words, 'lower': words_lower, 'len_map': len_map}
+
+                    if '_' in name:
+                        # Sub-list: e.g. 'Portuguese_palindromos' -> lang='Portuguese', sub='palindromos'
+                        parts = name.split('_', 1)
+                        file_lang, sub = parts[0], parts[1]
+                        if file_lang == lang:
                             if lang not in self.sublists:
                                 self.sublists[lang] = {}
                             self.sublists[lang][sub] = data
-                        else:
+                    else:
+                        if name == lang:
                             self.wordlists[name] = data
-                    except Exception as e:
-                        logger.error("Error loading %s: %s", filename, e)
+                except Exception as e:
+                    logger.error("Error loading %s: %s", filename, e)
 
     def get_sublists(self, lang):
         """Returns available sub-list names for the given language."""
-        resolved_lang = self._resolve_language_name(lang)
-        return list(self.sublists.get(resolved_lang, {}).keys())
+        with self._lock:
+            resolved_lang = self._resolve_language_name(lang)
+            if resolved_lang not in self.sublists:
+                self._load_language(resolved_lang)
+            return list(self.sublists.get(resolved_lang, {}).keys())
 
     def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix='', finish_with_letters='', suffix=''):
         """
@@ -121,6 +153,8 @@ class WordManager:
         """
         with self._lock:
             lang = self._resolve_language_name(lang)
+            if lang not in self.wordlists:
+                self._load_language(lang)
             if lang not in self.wordlists:
                 return None
 
@@ -145,25 +179,36 @@ class WordManager:
             max_len_valid = max_len < 46
             has_len_filter = min_len_valid or max_len_valid
         
-        # Optimize search using pre-lowercased list and single pass
+        # Optimize search using pre-lowercased list and length index
             data = self.wordlists[lang]
+            len_map = data.get('len_map', {})
         
             candidates = []
             prefix_lower = prefix.lower() if prefix else ''
             suffix_lower = suffix.lower() if suffix else ''
         
+            # If length filters are active, only iterate through matching lengths
+            target_indices = []
+            if has_len_filter:
+                for length in range(min_len, max_len + 1):
+                    if length in len_map:
+                        target_indices.extend(len_map[length])
+            else:
+                # Fallback to full list if no length filter (rare in practice)
+                target_indices = range(len(data['lower']))
+
             if prefix_lower or suffix_lower:
-                for i, word_lower in enumerate(data['lower']):
+                for i in target_indices:
+                    word_lower = data['lower'][i]
                     if ((not prefix_lower or word_lower.startswith(prefix_lower)) and 
                         (not suffix_lower or word_lower.endswith(suffix_lower)) and 
                         word_lower not in self.used_words):
-                        if not has_len_filter or (min_len <= len(word_lower) <= max_len):
-                            candidates.append(data['full'][i])
+                        candidates.append(data['full'][i])
             else:
-                for i, word_lower in enumerate(data['lower']):
+                for i in target_indices:
+                    word_lower = data['lower'][i]
                     if prompt in word_lower and word_lower not in self.used_words:
-                        if not has_len_filter or (min_len <= len(word_lower) <= max_len):
-                            candidates.append(data['full'][i])
+                        candidates.append(data['full'][i])
 
             if not candidates:
                 return None
@@ -307,13 +352,45 @@ class WordManager:
                     self.letter_targets = self._build_initial_targets()
 
     def reset_used(self):
+        """Resets used words history and clears memory cache of wordlists to force a disk reload."""
         with self._lock:
             self.used_words.clear()
+            self.wordlists.clear()
+            self.sublists.clear()
+            self._lang_cache.clear()
             self.letter_targets = self._build_initial_targets()
             self.current_alpha_char = 'a'
 
     def get_languages(self):
-        return list(self.wordlists.keys())
+        """Returns all available languages by discovering .txt files in wordlists directory.
+        
+        Discovers language files (Language.txt, not Language_subname.txt).
+        Also loads them for quick access.
+        """
+        with self._lock:
+            if not os.path.exists(self.wordlist_dir):
+                logger.warning(f"Wordlist directory not found: {self.wordlist_dir}")
+                return []
+            
+            discovered_langs = set()
+            
+            # Discover all languages by checking .txt files
+            for filename in os.listdir(self.wordlist_dir):
+                if filename.endswith('.txt'):
+                    # Fix for potential encoding/normalization issues with filenames
+                    name = filename[:-4]
+                    
+                    # Only main lists, not sublists (those have underscore)
+                    if '_' not in name:
+                        discovered_langs.add(name)
+                        # Ensure it's loaded
+                        if name not in self.wordlists:
+                            try:
+                                self._load_language_unsafe(name)
+                            except Exception as e:
+                                logger.error(f"Failed to load discovered language {name}: {e}")
+            
+            return sorted(list(discovered_langs))
 
     def get_sublists_map(self):
         """Returns a map of language -> list of sub-list names."""

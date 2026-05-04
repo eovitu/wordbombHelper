@@ -72,7 +72,7 @@ def create_app():
         with ll_grid_region_lock:
             return ll_grid_region
 
-    screen_reader = ScreenReader(callback_found_word=None)
+    screen_reader = ScreenReader(autoplay_state=autoplay_state, callback_found_word=None)
     word_service = WordService(word_manager, typer, screen_reader, autoplay_state)
 
     def build_trie_bg(lang=None):

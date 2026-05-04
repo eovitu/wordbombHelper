@@ -51,7 +51,14 @@ if __name__ == "__main__":
 
     logger.info("Starting Overlay Manager...")
 
-    from overlay_manager import run_overlay
+    from overlay_manager import run_overlay, get_overlay
+    
+    def update_overlay_word(word):
+        ov = get_overlay()
+        if ov:
+            ov.set_word(word)
+
+    word_service.on_word_found_callback = update_overlay_word
 
     def on_overlay_move(region):
         if screen_reader:

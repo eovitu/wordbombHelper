@@ -19,6 +19,10 @@ class SolverCacheService:
         if hasattr(self.word_manager, "_resolve_language_name"):
             lang = self.word_manager._resolve_language_name(lang)
 
+        # Ensure the language is loaded
+        if lang not in self.word_manager.wordlists:
+            self.word_manager._load_language(lang)
+
         if lang not in self.word_manager.wordlists:
             logger.error("Language '%s' not found in wordlists!", lang)
             return None

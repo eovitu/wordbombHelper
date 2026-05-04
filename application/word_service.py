@@ -12,8 +12,15 @@ class WordService:
         self.typer = typer
         self.screen_reader = screen_reader
         self.autoplay_state = autoplay_state
+        self.on_word_found_callback = None
 
     def on_prompt_found(self, prompt_text):
+        if not prompt_text:
+            self.screen_reader.suggested_word = ""
+            if self.on_word_found_callback:
+                self.on_word_found_callback("")
+            return False
+            
         logger.info("Auto-Play: Found prompt '%s'", prompt_text)
         self.autoplay_state.add_log(f"Prompt: '{prompt_text}'")
 
@@ -52,6 +59,15 @@ class WordService:
         )
         if word:
             self.word_manager.mark_used(word)
+            self.screen_reader.suggested_word = word
+            if self.on_word_found_callback:
+                self.on_word_found_callback(word)
+            
+            if not config.get("auto_type", True):
+                logger.info("Auto-Play: Suggesting word '%s' (Auto-Type OFF)", word)
+                self.autoplay_state.add_log(f"Suggestion: '{word}'")
+                return True
+
             logger.info("Auto-Play: Typing word '%s'", word)
             self.autoplay_state.add_log(f"Typing: '{word}'")
 
@@ -151,4 +167,3 @@ class WordService:
 
     def reset_words(self):
         self.word_manager.reset_used()
-        self.word_manager.load_wordlists()

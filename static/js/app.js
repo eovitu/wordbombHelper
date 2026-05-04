@@ -294,8 +294,14 @@ async function saveNewPreset() {
         if (response.ok) {
             alert("Preset saved successfully!");
             fetchPresets();
+        } else {
+            const err = await response.json();
+            alert(`Failed to save preset: ${err.message || 'Unknown error'}`);
         }
-    } catch (e) { console.error('Failed to save', e); }
+    } catch (e) { 
+        console.error('Failed to save', e); 
+        alert("Network error while saving preset.");
+    }
 }
 
 async function deletePreset() {
@@ -312,8 +318,14 @@ async function deletePreset() {
             alert("Preset deleted!");
             document.getElementById('preset-selector').value = "";
             fetchPresets();
+        } else {
+            const err = await response.json();
+            alert(`Failed to delete: ${err.message || 'Not found'}`);
         }
-    } catch (e) { console.error('Failed to delete', e); }
+    } catch (e) { 
+        console.error('Failed to delete', e); 
+        alert("Network error while deleting preset.");
+    }
 }
 
 async function syncConfigToBackend() {
@@ -477,6 +489,20 @@ async function pollAutoStatus() {
             core.className = 'status-core';
             if (state.status === 'Watching') core.classList.add('watching');
             else if (state.status === 'Parsing' || state.status === 'Typing') core.classList.add('active');
+        }
+
+        const suggestionPanel = document.getElementById('suggestion-display');
+        const suggestionWord = document.getElementById('auto-suggested-word');
+        if (state.suggested_word) {
+            if (suggestionPanel) suggestionPanel.style.display = 'block';
+            if (suggestionWord) suggestionWord.textContent = state.suggested_word.toUpperCase();
+            
+            // Also update the manual tab's word just in case
+            const manualDisplay = document.getElementById('current-word');
+            if (manualDisplay) manualDisplay.textContent = state.suggested_word.toUpperCase();
+        } else {
+            // Only hide if we are not watching or idle? 
+            // Actually let's keep it if we are watching but waiting.
         }
 
         if (state.status === 'Calibrating') {

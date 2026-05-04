@@ -28,6 +28,7 @@ class AutoplayStateService:
             "priority_sublist": "",
             "delayed_type": False,
             "add_period_prob": 0.0,
+            "auto_type": False,
         }
         self.logs = []
         self.log_seq = 0
@@ -95,5 +96,7 @@ class AutoplayStateService:
                 self.config["delayed_type"] = bool(data["delayed_type"])
             if "add_period_prob" in data:
                 self.config["add_period_prob"] = to_float(data["add_period_prob"], self.config["add_period_prob"])
+            if "auto_type" in data:
+                self.config["auto_type"] = bool(data["auto_type"])
 
             return dict(self.config)

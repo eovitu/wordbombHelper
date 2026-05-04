@@ -12,17 +12,11 @@ pyautogui.PAUSE = 0.001 # Minimize default pause between actions
 logger = logging.getLogger(__name__)
 
 # QWERTY Proximity Map for realistic typos (Narrowed down for ultra-realism)
+# Removed special characters that cause keyboard.write() errors: . , ; [ ] = - /
 QWERTY_MAP = {
     'q': 'wa', 'w': 'qse', 'e': 'wsdr', 'r': 'edf', 't': 'rfgy', 'y': 'tghu', 'u': 'yhij', 'i': 'ujko', 'o': 'iklp', 'p': 'ol',
-    'a': 'qwsz', 's': 'awedxz', 'd': 'serfcx', 'f': 'drtgvc', 'g': 'ftyhbv', 'h': 'gyujnb', 'j': 'huikmn', 'k': 'jiol,m', 'l': 'kop',
-    'z': 'asx', 'x': 'zsdc', 'c': 'xdfv', 'v': 'cfgb', 'b': 'vghn', 'n': 'bhjm', 'm': 'njk,',
-    '.': 'm,', ',': 'mn.', ' ': 'cvbnm',
-    'á': 'asw', 'ã': 'asw', 'à': 'asw', 'â': 'asw',
-    'é': 'erdw', 'ê': 'erdw',
-    'í': 'iujk',
-    'ó': 'olp', 'õ': 'olp', 'ô': 'olp',
-    'ú': 'uyjh',
-    'ç': 'l.;'
+    'a': 'qwsz', 's': 'awedxz', 'd': 'serfcx', 'f': 'drtgvc', 'g': 'ftyhbv', 'h': 'gyujnb', 'j': 'huikmn', 'k': 'jiolm', 'l': 'kop',
+    'z': 'asx', 'x': 'zsdc', 'c': 'xdfv', 'v': 'cfgb', 'b': 'vghn', 'n': 'bhjm', 'm': 'njk'
 }
 
 # Letters that are generally harder to reach or less common, causing micro-hesitations
@@ -344,15 +338,18 @@ class Typer:
                 if chars_typed_since_mistake >= mistake_chars_limit or i == len(word) - 1:
                     time.sleep(abs(random.gauss(0.45, 0.12))) # Realization pause
                     
-                    to_delete = chars_typed_since_mistake + 1
-                    for _ in range(to_delete):
-                        keyboard.press_and_release('backspace')
-                        time.sleep(random.uniform(0.04, 0.08))
+                    # Clear the entire input field
+                    pyautogui.keyDown('ctrl')
+                    pyautogui.press('a')
+                    pyautogui.keyUp('ctrl')
+                    time.sleep(0.05)
+                    pyautogui.press('backspace')
+                    time.sleep(0.12)
                     
                     time.sleep(abs(random.gauss(0.3, 0.1))) # Safety pause
                     
                     late_mistake_active = False
-                    i = mistake_index # Reset to the mistake index to type it correctly
+                    i = 0 # Reset to the beginning to re-type the whole word
                     current_speed_modifier = float(current_speed_modifier) * 0.75 # Small speed boost to "catch up"
                     continue
             else:
