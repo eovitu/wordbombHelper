@@ -1,72 +1,66 @@
-# Implementation Plan - Fixing Auto-Play OCR and Overlay Stability
+# Implementation Plan - Professional Auto-Play & UI Enhancements
 
-This plan addresses the issues where the Auto-Play feature misreads the prompt (often reading "ess" instead of the actual syllable) and the application crashes due to Tkinter thread safety issues.
+This plan addresses OCR accuracy ("ess" issue), application stability (Tkinter crashes), and UI/UX improvements to provide a more professional, "invisible" helper experience.
 
 ## Problem Analysis
 
-1.  **OCR Misreading ("ess" issue)**:
-    - The `screen_reader.py` uses a very restrictive vertical crop (top 35% of the box), which often misses the prompt if it's centered.
-    - The overlay border (purple) falls within the HSV range for BLUE turn detection, causing the program to think it's always the player's turn even when it's not.
-    - When it thinks it's its turn but can't find the real prompt, it reads noise (like "ess") and types irrelevant words.
-2.  **Tkinter Stability**:
-    - `TclError: bad window path name` occurs because `Toplevel` windows are destroyed when closed by the user, but the code still tries to access them.
-    - Thread safety issues when calling UI methods from the `screen_reader` thread.
+1.  **OCR Misreading ("ess" issue)**: The current crop is too tight (top 35%), often missing centered prompts. The helper's own border colors are being detected as game turn indicators.
+2.  **UI/UX Quality**: The current overlay is bulky. The user wants an "invisible" capture area (like Letter Link mode) and professional front-end integration.
+3.  **Tkinter Stability**: Thread safety issues and window destruction are causing `TclError: bad window path name`.
 
 ## Proposed Changes
 
 ### [Screen Reader]
 
-Improve OCR accuracy and turn detection by excluding the overlay border and being more flexible with prompt location.
+Refine OCR to handle the specific layout: Prompt on top, "SUA VEZ" on bottom.
 
 #### [screen_reader.py](file:///C:/Users/vitu/Documents/wordbomb/screen_reader.py)
 
-- **Border Exclusion**: Crop 10 pixels from each side of the captured image before processing to remove the overlay's own border from color detection.
-- **Flexible Prompt Cropping**: Increase the vertical crop from 35% to 65% to ensure the prompt is captured even if it's lower in the box.
-- **Improved Turn Validation**: Add a check to ensure `is_my_turn` isn't triggered by the overlay's own colors if cropping didn't remove them.
+- **Layout-Aware Cropping**:
+    - Divide the captured region into a **Top Zone** (Prompt) and **Bottom Zone** (Turn Indicator).
+    - **Top Zone (0-60%)**: Search for the syllable.
+    - **Bottom Zone (60-100%)**: Search for "SUA VEZ" or "YOUR TURN" colors/text.
+- **Border Exclusion**: Ignore the outer 10 pixels to avoid detecting the helper's own UI.
+- **Improved Turn Validation**: Only trigger if "SUA VEZ" is found in the Bottom Zone.
 
 ```python
 # In _capture_and_ocr
-sct_img = sct.grab(monitor)
 # ...
-img_bgr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(sct_img.height, sct_img.width, 4)
-img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
-
-# NEW: Remove border pixels to avoid detecting the overlay itself
-border = 10
-if img_bgr.shape[0] > border*2 and img_bgr.shape[1] > border*2:
-    img_bgr = img_bgr[border:-border, border:-border]
+h, w = img_large.shape[:2]
+# Top Zone for Prompt (60% height)
+prompt_zone = img_large[0:int(h*0.6), :]
+# Bottom Zone for Turn Indicator (remaining 40%)
+turn_zone = img_large[int(h*0.6):h, :]
 ```
 
 ---
 
 ### [Overlay Manager]
 
-Fix Tkinter crashes and improve window management.
+Make the helper area "invisible" and fix stability issues.
 
 #### [overlay_manager.py](file:///C:/Users/vitu/Documents/wordbomb/overlay_manager.py)
 
-- **Window Persistence**: Override the `WM_DELETE_WINDOW` protocol for the result window to `withdraw()` instead of `destroy()`.
-- **Existence Checks**: Add `winfo_exists()` checks before calling `withdraw()` or `deiconify()`.
-- **Thread Safety**: Ensure all UI calls are wrapped in `root.after`.
-
-```python
-# In OverlayApp.__init__
-self.result_root.protocol("WM_DELETE_WINDOW", self.hide_result)
-
-# In hide_result
-def hide_result(self):
-    if hasattr(self, 'result_root') and self.result_root.winfo_exists():
-        self.result_root.withdraw()
-        self._result_visible = False
-```
+- **Ghost Mode**: Reduce border thickness to 1px or make it a very faint dashed line when active.
+- **Stability Fixes**:
+    - Use `protocol("WM_DELETE_WINDOW", ...)` to `withdraw()` instead of `destroy()`.
+    - Wrap all UI updates in `root.after` for thread safety.
+    - Check `winfo_exists()` before any operation on `Toplevel`.
 
 ---
 
-### [Application Logic]
+### [Front-End]
 
-#### [word_service.py](file:///C:/Users/vitu/Documents/wordbomb/application/word_service.py)
+Enhance the "Manual" and "Auto" tabs to feel more like a professional dashboard.
 
-- Update `reset_words` to handle the overlay more safely.
+#### [index.html](file:///C:/Users/vitu/Documents/wordbomb/templates/index.html)
+
+- Add a dedicated "LIVE FEED" or "SUGGESTION" area in the Manual tab that updates in real-time during Auto-Play.
+- Improve the visual feedback when it's the player's turn (e.g., a glowing status orb).
+
+#### [app.js](file:///C:/Users/vitu/Documents/wordbomb/static/js/app.js)
+
+- Ensure `pollAutoStatus` updates the main word display prominently when a word is found.
 
 ---
 
@@ -74,12 +68,11 @@ def hide_result(self):
 
 ### Manual Verification
 1.  **Test OCR Accuracy**:
-    - Run the application and position the red/purple box over a WordBomb prompt.
-    - Verify in the logs that the prompt is correctly identified (no more "ess" when it should be "zd").
+    - Position the "invisible" box over the game prompt.
+    - Verify that "UPP" (from screenshot) is read correctly, even if "SUA VEZ" is present below it.
 2.  **Test Turn Detection**:
-    - Move the box to an empty area of the screen.
-    - Verify that "Watching" status remains but it doesn't try to type words (i.e., the border doesn't trigger "SUA VEZ").
-3.  **Test Overlay Stability**:
-    - Close the "MATCH READY" popup using the 'X' button.
-    - Trigger another match. Verify that the popup reappears without crashing the app.
-    - Click "Reset Used Words" in the browser. Verify no Tkinter errors in the console.
+    - Verify that words only appear in the front-end when "SUA VEZ" is visible in the game.
+3.  **Test Stability**:
+    - Stress test by toggling Auto-Play, closing result popups, and refreshing the browser. Ensure no Python/Tkinter errors occur.
+4.  **UI Verification**:
+    - Check if the capture box is non-intrusive and the front-end display is professional.

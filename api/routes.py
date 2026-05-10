@@ -1,7 +1,7 @@
 import logging
-import threading
 
 from flask import Blueprint, jsonify
+
 from shared.parsing import json_or_empty
 
 logger = logging.getLogger(__name__)
@@ -12,11 +12,8 @@ def create_api_blueprint(deps):
     screen_reader = deps["screen_reader"]
     word_service = deps["word_service"]
     autoplay_state = deps["autoplay_state"]
-    solver_cache = deps["solver_cache"]
-    letterlink_service = deps["letterlink_service"]
     preset_service = deps["preset_service"]
     region_store = deps["region_store"]
-    compat_set_ll_region = deps.get("set_ll_grid_region")
     optional_auth_required = deps["optional_auth_required"]
 
     bp = Blueprint("api", __name__)
@@ -44,8 +41,6 @@ def create_api_blueprint(deps):
     @optional_auth_required
     def reset_words():
         word_service.reset_words()
-        solver_cache.clear()
-        threading.Thread(target=solver_cache.build_trie_bg).start()
         return jsonify({"status": "success"})
 
     @bp.route("/api/calibration/start", methods=["POST"])
@@ -58,45 +53,36 @@ def create_api_blueprint(deps):
     @optional_auth_required
     def calibration_click():
         data = json_or_empty()
-        x = data.get("x")
-        y = data.get("y")
-        mode = data.get("mode", "classic")
+        raw_x = data.get("x")
+        raw_y = data.get("y")
+
+        if raw_x is None or raw_y is None:
+            return jsonify({"status": "error", "message": "Coordinates 'x' and 'y' are required"}), 400
+
+        try:
+            x = int(round(float(raw_x)))
+            y = int(round(float(raw_y)))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "Invalid numeric coordinates"}), 400
 
         result = screen_reader.handle_calibration_click(x, y)
 
-        if result.get("status") == "done" and mode == "letterlink":
+        if result.get("status") == "done":
             region = result["regions"]["turn_region"]
-            region_store.set_region(region)
-            if compat_set_ll_region:
-                compat_set_ll_region(region)
-            result["message"] = "Letter Link Grid Calibrated!"
+            try:
+                region_store.set_region(region)
+                screen_reader.turn_region = region_store.get_region() or region
+                screen_reader.prompt_region = screen_reader.turn_region
+            except Exception:
+                pass
 
         return jsonify(result)
-
-    @bp.route("/api/letterlink/solve", methods=["POST"])
-    @optional_auth_required
-    def solve_letter_link():
-        try:
-            payload, status = letterlink_service.solve()
-            return jsonify(payload), status
-        except Exception as e:
-            logger.error("Error in solve_letter_link: %s", str(e), exc_info=True)
-            return jsonify({"status": "error", "message": f"Internal Error: {str(e)}"}), 500
 
     @bp.route("/api/autoplay/toggle", methods=["POST"])
     @optional_auth_required
     def toggle_autoplay():
-        from overlay_manager import get_overlay
-
         try:
             active = screen_reader.toggle_watching()
-            overlay = get_overlay()
-            if overlay:
-                if active:
-                    overlay.root.after(0, overlay.show)
-                else:
-                    overlay.root.after(0, overlay.hide)
-
             return jsonify({"status": "active" if active else "inactive"})
         except Exception as e:
             logger.error("Error toggling auto-play: %s", e)
@@ -105,7 +91,10 @@ def create_api_blueprint(deps):
     @bp.route("/api/autoplay/status", methods=["GET"])
     def get_autoplay_status():
         state = screen_reader.get_state()
+        cfg = autoplay_state.snapshot_config()
         state["logs"] = autoplay_state.last_logs(10)
+        state["autoplay_lang"] = cfg.get("lang")
+        state["autoplay_strategy"] = cfg.get("strategy")
         return state
 
     @bp.route("/api/autoplay/config", methods=["POST"])
@@ -113,6 +102,8 @@ def create_api_blueprint(deps):
     def update_autoplay_config():
         data = json_or_empty()
         cfg = autoplay_state.update_from_payload(data)
+        if cfg.get("lang"):
+            wm.current_language = cfg["lang"]
         return jsonify({"status": "ok", "config": cfg})
 
     @bp.route("/api/presets", methods=["GET"])

@@ -8,81 +8,42 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
-        .ll-panel {
-            margin-top: 12px;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-        .ll-word {
-            padding: 8px 14px;
-            border-radius: 8px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 13px;
-            color: #a0aec0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .ll-word:hover {
-            background: rgba(255,255,255,0.1);
-        }
-        .ll-word.best {
-            background: rgba(124, 58, 237, 0.25);
-            border-color: rgba(124, 58, 237, 0.6);
-            color: #e2e8f0;
-            font-size: 18px;
-            font-weight: 600;
-            padding: 12px 16px;
-        }
-        .ll-len {
-            font-size: 11px;
-            background: rgba(255,255,255,0.1);
-            padding: 2px 7px;
-            border-radius: 99px;
-            color: #718096;
-        }
-        .ll-word.best .ll-len {
-            background: rgba(124, 58, 237, 0.4);
-            color: #c4b5fd;
-        }
-        .ll-visual-grid {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
+        .status-orb-mini {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4a5568;
             margin: 10px auto;
-            padding: 10px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 8px;
-            width: max-content;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
         }
-        .ll-row { display: flex; gap: 4px; }
-        .ll-cell {
-            width: 38px; height: 38px;
-            display: flex; align-items: center; justify-content: center;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 6px;
-            font-size: 16px; font-weight: bold; color: #718096;
-            position: relative;
+        .status-orb-mini.active {
+            background: #10b981;
+            box-shadow: 0 0 15px #10b981;
         }
-        .ll-cell.in-path {
-            background: rgba(124, 58, 237, 0.2);
-            border-color: #8b5cf6;
+        .live-suggestion-box {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(139, 92, 246, 0.1);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            border-radius: 12px;
+            text-align: center;
+        }
+        .live-label {
+            display: block;
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: #8b5cf6;
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+        .live-word {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
             color: #fff;
+            text-shadow: 0 0 10px rgba(139, 92, 246, 0.5);
         }
-        .ll-cell .step-badge {
-            position: absolute; top: -5px; right: -5px;
-            background: #10b981; color: #fff; font-size: 9px;
-            width: 14px; height: 14px; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            border: 1px solid rgba(0,0,0,0.5);
-        }
-        .ll-cell.empty { color: rgba(255,255,255,0.05); }
     </style>
 </head>
 
@@ -90,7 +51,6 @@
     <div class="bg-dark"></div>
 
     <div class="app-layout">
-        <!-- Top Navigation -->
         <header class="top-header">
             <div class="logo-area">
                 <span class="logo-mark">WB<span class="dot">.</span></span>
@@ -114,14 +74,13 @@
             </nav>
         </header>
 
-        <!-- Main Content Area -->
         <main class="content-area">
-            
-            <!-- Manual Tab -->
+
             <section id="manual-tab" class="tab-content active">
                 <div class="futuristic-panel text-center">
                     <span class="surface-label">TERMINAL MATCH</span>
                     <h2 id="current-word" class="hero-text">Waiting...</h2>
+                    <div id="status-orb-manual" class="status-orb-mini"></div>
                 </div>
 
                 <div class="input-stack">
@@ -152,23 +111,18 @@
                             <input type="text" id="exclude-input" placeholder="w, z">
                         </div>
                     </div>
+
+                    <div class="live-suggestion-box">
+                        <span class="live-label">LIVE AUTO-PLAY SUGGESTION</span>
+                        <div id="live-word-display" class="live-word">WAITING TURN...</div>
+                    </div>
+
                     <button class="btn-text btn-danger w-full mt-2" onclick="resetWords()">PURGE HISTORY</button>
                 </div>
             </section>
 
-            <!-- Auto-Play Tab -->
             <section id="auto-tab" class="tab-content">
                 <div class="auto-panel">
-                    
-                    <div class="form-group block mb-4">
-                        <label>GAME MODE</label>
-                        <div class="select-box premium-select">
-                            <select id="game-mode-select">
-                                <option value="classic">Classic Bomb</option>
-                                <option value="letterlink">Letter Link</option>
-                            </select>
-                        </div>
-                    </div>
 
                     <div class="status-orb-container" id="classic-orb-container">
                         <div class="orb-ring" id="status-ring">
@@ -177,26 +131,13 @@
                         <h2 class="status-display" id="auto-status-text">Idle</h2>
                     </div>
 
-                    <div id="suggestion-display" class="text-center mb-4" style="display:none">
-                        <span class="surface-label">SUGGESTION</span>
-                        <h2 id="auto-suggested-word" class="hero-text" style="font-size: 2.5rem; color: #8b5cf6;">---</h2>
-                    </div>
-
                     <div class="stack-buttons">
                         <button class="btn-solid btn-primary w-full" onclick="toggleAutoPlay()" id="autoplay-toggle-btn">
                             ENGAGE AUTOMATON
                         </button>
-                        <button class="btn-solid btn-primary w-full" onclick="solveLetterLink()" id="solve-ll-btn" style="display:none; background: linear-gradient(135deg, #7c3aed, #4f46e5);">
-                            SOLVE GRID (ALT+S)
-                        </button>
                         <button class="btn-outline w-full" onclick="startCalibration()">
                             CALIBRATE SCREEN
                         </button>
-                    </div>
-
-                    <!-- Letter Link result panel — shows top words after solving -->
-                    <div id="ll-result-panel" style="display:none" class="ll-panel">
-                        <!-- populated by JS after solve -->
                     </div>
                 </div>
 
@@ -210,7 +151,6 @@
                 </div>
             </section>
 
-            <!-- Config Tab -->
             <section id="config-tab" class="tab-content">
                 <div class="preset-controls mb-4">
                     <div class="select-box premium-select flex-1">
@@ -223,17 +163,15 @@
                 </div>
 
                 <div class="settings-masonry">
-                    
-                    <!-- Language & Core -->
+
                     <div class="settings-card">
                         <div class="card-header">
                             <h3>LEXICON</h3>
                         </div>
-                        
+
                         <div class="form-group block">
                             <label>TARGET LANGUAGE</label>
                             <div class="pill-group" id="lang-selector">
-                                <!-- JS Populated -->
                             </div>
                         </div>
 
@@ -271,7 +209,6 @@
                         </div>
                     </div>
 
-                    <!-- Automation Behavior -->
                     <div class="settings-card">
                         <div class="card-header">
                             <h3>DYNAMICS</h3>
@@ -328,7 +265,6 @@
                         </div>
                     </div>
 
-                    <!-- Imperfection Injection -->
                     <div class="settings-card">
                         <div class="card-header">
                             <h3>HUMAN IMPERFECTION</h3>
@@ -345,7 +281,7 @@
                                     <input type="number" id="max-typos-slider" class="micro-input" min="0" max="5" value="2" title="Max Typos">
                                 </div>
                             </div>
-                            
+
                             <div class="slider-group">
                                 <div class="slider-labels">
                                     <span>LATE RETRACTION</span>
@@ -391,7 +327,6 @@
         </main>
     </div>
 
-    <!-- Minimal Overlay -->
     <div id="calibration-overlay" class="calib-glass hidden">
         <div class="calib-modal">
             <h2 id="calib-instruction">CLICK BOUNDARY</h2>

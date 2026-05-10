@@ -20,11 +20,13 @@ class WordService:
             if self.on_word_found_callback:
                 self.on_word_found_callback("")
             return False
-            
-        logger.info("Auto-Play: Found prompt '%s'", prompt_text)
         self.autoplay_state.add_log(f"Prompt: '{prompt_text}'")
+        if self.on_word_found_callback:
+            self.on_word_found_callback("")
 
         config = self.autoplay_state.snapshot_config()
+        if config.get("lang"):
+            self.word_manager.current_language = config["lang"]
 
         lang = config["lang"]
         min_len = config["min_len"]
@@ -64,11 +66,9 @@ class WordService:
                 self.on_word_found_callback(word)
             
             if not config.get("auto_type", True):
-                logger.info("Auto-Play: Suggesting word '%s' (Auto-Type OFF)", word)
-                self.autoplay_state.add_log(f"Suggestion: '{word}'")
+                self.autoplay_state.add_log(f"Match ready: '{word}'")
                 return True
 
-            logger.info("Auto-Play: Typing word '%s'", word)
             self.autoplay_state.add_log(f"Typing: '{word}'")
 
             self.typer.type_word(
@@ -88,8 +88,9 @@ class WordService:
             self.typer.done_event.wait(timeout=5)
             return True
 
-        logger.warning("Auto-Play: No word found for prompt '%s'", prompt_text)
         self.autoplay_state.add_log(f"No word found for '{prompt_text}'")
+        if self.on_word_found_callback:
+            self.on_word_found_callback("")
         return False
 
     def get_word_from_payload(self, data):
@@ -117,6 +118,8 @@ class WordService:
         rec_target = to_int(data.get("recover_target", 2), 2)
         rec_exclude = data.get("recover_exclude", "")
         self.word_manager.set_recover_config(rec_target, rec_exclude)
+
+        self.word_manager.current_language = params.lang
 
         word = self.word_manager.get_word(
             params.prompt,
@@ -167,3 +170,6 @@ class WordService:
 
     def reset_words(self):
         self.word_manager.reset_used()
+        self.screen_reader.suggested_word = ""
+        self.screen_reader.last_suggested_prompt = ""
+        self.screen_reader.preview_prompt = ""

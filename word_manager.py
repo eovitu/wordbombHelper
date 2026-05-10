@@ -154,13 +154,13 @@ class WordManager:
         with self._lock:
             lang = self._resolve_language_name(lang)
             if lang not in self.wordlists:
-                self._load_language(lang)
+                self._load_language_unsafe(lang)
             if lang not in self.wordlists:
                 return None
 
             prompt = prompt.lower()
 
-        # If a priority sub-list is set, try it first, then fall back to main list
+            # If a priority sub-list is set, try it first, then fall back to main list
             if priority_sublist and lang in self.sublists and priority_sublist in self.sublists[lang]:
                 sub_data = self.sublists[lang][priority_sublist]
                 sub_matches = [
@@ -174,12 +174,12 @@ class WordManager:
                     # Found in sub-list — use it directly (skip all other filters for simplicity)
                     return random.choice(sub_matches)
 
-        # Define filter parameters early to avoid doing it per string
+            # Define filter parameters early to avoid doing it per string
             min_len_valid = min_len > 1
             max_len_valid = max_len < 46
             has_len_filter = min_len_valid or max_len_valid
-        
-        # Optimize search using pre-lowercased list and length index
+
+            # Optimize search using pre-lowercased list and length index
             data = self.wordlists[lang]
             len_map = data.get('len_map', {})
         
@@ -213,15 +213,15 @@ class WordManager:
             if not candidates:
                 return None
 
-        # Prepare exclude set
+            # Prepare exclude set
             exclude_chars = self._parse_letter_set(exclude_letters)
 
-        # Filter out exclude_chars from beginning of words, UNLESS it empties the list
+            # Filter out exclude_chars from beginning of words, UNLESS it empties the list
             if exclude_chars:
                 filtered = [w for w in candidates if w.lower()[0] not in exclude_chars]
                 candidates = filtered if filtered else candidates
 
-        # Pre-filter (Starts With):
+            # Pre-filter (Starts With):
             starts_chars = self._parse_letter_set(starts_with_letters)
             if starts_chars:
                 starts_filtered = [w for w in candidates if w.lower()[0] in starts_chars]
@@ -229,7 +229,7 @@ class WordManager:
                     # Only restrict if there are actually matches for the start letter
                     candidates = starts_filtered
 
-        # Pre-filter (Ends With):
+            # Pre-filter (Ends With):
             finish_chars = self._parse_letter_set(finish_with_letters)
             if finish_chars:
                 finish_filtered = [w for w in candidates if w.lower()[-1] in finish_chars]
@@ -237,13 +237,13 @@ class WordManager:
                     # Only restrict if there are actually matches for the end letter
                     candidates = finish_filtered
 
-        # Pre-filter (Priority Length):
+            # Pre-filter (Priority Length):
             if priority_min_len > 1 or priority_max_len < 46:
                 len_filtered = [w for w in candidates if priority_min_len <= len(w) <= priority_max_len]
                 if len_filtered:
                     candidates = len_filtered
 
-        # Pre-filter: Priority Letters Filtering (Contains)
+            # Pre-filter: Priority Letters Filtering (Contains)
             pri_chars = self._parse_letter_set(priority_letters)
             if pri_chars:
                 # Score candidates
@@ -259,7 +259,7 @@ class WordManager:
                     # Override candidates with only the tied top scorers
                     candidates = [w for s, w in scored if s == top_score]
 
-        # Apply strategy
+            # Apply strategy
             if strategy == 'shortest':
                 candidates.sort(key=len)
                 # Pick from the top few to avoid always being the same

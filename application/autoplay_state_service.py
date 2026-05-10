@@ -1,6 +1,6 @@
 import threading
 
-from shared.parsing import to_float, to_int
+from shared.parsing import to_bool, to_float, to_int
 
 
 class AutoplayStateService:
@@ -93,10 +93,10 @@ class AutoplayStateService:
             if "priority_sublist" in data:
                 self.config["priority_sublist"] = data["priority_sublist"]
             if "delayed_type" in data:
-                self.config["delayed_type"] = bool(data["delayed_type"])
+                self.config["delayed_type"] = to_bool(data["delayed_type"], self.config["delayed_type"])
             if "add_period_prob" in data:
                 self.config["add_period_prob"] = to_float(data["add_period_prob"], self.config["add_period_prob"])
             if "auto_type" in data:
-                self.config["auto_type"] = bool(data["auto_type"])
+                self.config["auto_type"] = to_bool(data["auto_type"], self.config["auto_type"])
 
             return dict(self.config)

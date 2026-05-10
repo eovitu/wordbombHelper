@@ -8,7 +8,10 @@ import logging
 import cv2
 import numpy as np
 import os
+import shutil
 from pynput import mouse
+
+from shared.parsing import normalize_capture_region
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +19,19 @@ import platform
 
 # Configure Tesseract path based on OS
 if platform.system() == 'Windows':
-    # Common installation path for Tesseract on Windows
     win_tess_path = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    if os.path.exists(win_tess_path):
+    if os.path.isfile(win_tess_path):
         pytesseract.pytesseract.tesseract_cmd = win_tess_path
     else:
-        # Fallback to just 'tesseract' and hope it's in PATH
-        pytesseract.pytesseract.tesseract_cmd = 'tesseract'
+        pytesseract.pytesseract.tesseract_cmd = shutil.which('tesseract') or 'tesseract'
 else:
-    # Linux/Mac path
-    pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+    _unix_candidates = ('/usr/bin/tesseract', '/usr/local/bin/tesseract', '/opt/homebrew/bin/tesseract')
+    for _tess_bin in _unix_candidates:
+        if os.path.isfile(_tess_bin):
+            pytesseract.pytesseract.tesseract_cmd = _tess_bin
+            break
+    else:
+        pytesseract.pytesseract.tesseract_cmd = shutil.which('tesseract') or 'tesseract'
 
 class ScreenReader:
     def __init__(self, autoplay_state=None, callback_found_word=None):
@@ -67,12 +73,69 @@ class ScreenReader:
         self.save_debug_screenshots = False
         self.last_word_typed = ""
         self.suggested_word = ""
+        # Last stabilized OCR syllable — shown in frontend while awaiting word lookup
+        self.preview_prompt = ""
         
         # Frame hash cache — skip processing if screen is visually identical between polls
         self._last_frame_hash = None
         
         # Persistence: don't cycle words if prompt is the same
         self.last_suggested_prompt = ""
+        self._turn_confirm_streak = 0
+        self._prompt_confirm_streak = 0
+        self._last_prompt_candidate = ""
+        # Keeps OCR / turn-detection semantics in sync with _last_frame_hash
+        self._last_capture_result = ("", None, False)
+
+    @staticmethod
+    def _clean_ocr_token(text):
+        return ''.join(ch for ch in (text or '') if ch.isalpha()).upper()
+
+    def _extract_prompt_candidate(self, pil_to_ocr, tess_lang, config):
+        ui_keywords = {
+            "SUA", "VEZ", "YOUR", "TURN", "VE2", "UEZ", "VAR", "SORA", "BANE",
+            "SOLO"
+        }
+
+        try:
+            ocr_data = pytesseract.image_to_data(
+                pil_to_ocr,
+                lang=tess_lang,
+                config=config,
+                output_type=pytesseract.Output.DICT,
+            )
+        except Exception:
+            ocr_data = None
+
+        best_candidate = ""
+        best_confidence = -1.0
+
+        if ocr_data:
+            for txt, conf in zip(ocr_data.get("text", []), ocr_data.get("conf", [])):
+                clean = self._clean_ocr_token(txt)
+                if not clean or clean in ui_keywords:
+                    continue
+                try:
+                    conf_val = float(conf)
+                except Exception:
+                    conf_val = -1.0
+                if conf_val > best_confidence:
+                    best_candidate = clean
+                    best_confidence = conf_val
+
+        if best_candidate:
+            return best_candidate.lower(), best_confidence
+
+        try:
+            fallback_text = pytesseract.image_to_string(pil_to_ocr, lang=tess_lang, config=config).strip().upper()
+        except Exception:
+            fallback_text = ""
+
+        fallback_candidate = self._clean_ocr_token(fallback_text)
+        if fallback_candidate and fallback_candidate not in ui_keywords:
+            return fallback_candidate.lower(), 0.0
+
+        return "", -1.0
 
     def set_callback(self, callback):
         self.callback_found_word = callback
@@ -81,7 +144,7 @@ class ScreenReader:
         self.log_callback = callback
 
     def _log(self, msg):
-        logger.info(msg)
+        logger.debug(msg)
         if self.log_callback:
             try:
                 self.log_callback(msg)
@@ -93,16 +156,21 @@ class ScreenReader:
         Called by the overlay window to update the current region.
         It updates both turn/prompt regions to be the single rectangle.
         """
-        x1 = region_data['x1']
-        y1 = region_data['y1']
-        
-        self.turn_region = {
-            'x1': x1, 'y1': y1, 
-            'width': region_data['width'], 
-            'height': region_data['height']
-        }
+        coords = normalize_capture_region(
+            {
+                "x1": region_data.get("x1"),
+                "y1": region_data.get("y1"),
+                "width": region_data.get("width"),
+                "height": region_data.get("height"),
+            }
+        )
+        if not coords:
+            logger.error("Overlay supplied invalid capture region: %s", region_data)
+            return
+
+        self.turn_region = coords
         self.prompt_region = self.turn_region
-        
+
         if not self.is_watching:
             self.start_watching()
 
@@ -142,7 +210,13 @@ class ScreenReader:
         """
         if self.status != "Calibrating":
             return {"status": "error", "message": "Not in calibration mode"}
-        
+
+        try:
+            x = int(round(float(x)))
+            y = int(round(float(y)))
+        except (TypeError, ValueError):
+            return {"status": "error", "message": "Invalid coordinates"}
+
         logger.info(f"Calibration click at {x}, {y} for step {self.calibration_step}")
 
         if self.calibration_step == 'turn_start':
@@ -180,7 +254,7 @@ class ScreenReader:
             self.stop_watching()
             return False
         else:
-            if not self.turn_region or not self.prompt_region:
+            if not normalize_capture_region(self.turn_region) or not normalize_capture_region(self.prompt_region):
                 logger.error("Cannot start watching: regions not calibrated")
                 return False
             self.start_watching()
@@ -215,15 +289,19 @@ class ScreenReader:
     def _capture_and_ocr(self, sct):
         """Capture the region and return (full_text_upper, prompt_text, is_my_turn)."""
         is_my_turn = False
-        if not self.prompt_region:
+        coords = normalize_capture_region(self.turn_region)
+        if not coords:
+            logger.warning("Calibrated capture region invalid or incomplete; re-calibrate.")
             return None, None, False
-
         monitor = {
-            "top": self.prompt_region['y1'],
-            "left": self.prompt_region['x1'],
-            "width": self.prompt_region['width'],
-            "height": self.prompt_region['height']
+            "top": coords['y1'],
+            "left": coords['x1'],
+            "width": coords['width'],
+            "height": coords['height'],
         }
+        if monitor["width"] < 8 or monitor["height"] < 8:
+            logger.warning("Capture region smaller than minimum; re-calibrate.")
+            return None, None, False
         
         # Use the provided mss instance
         sct_img = sct.grab(monitor)
@@ -231,14 +309,21 @@ class ScreenReader:
         # Frame cache: skip the expensive pipeline if screen is visually identical
         raw_bytes = bytes(sct_img.raw)
         frame_hash = hash(raw_bytes)
-        if frame_hash == self._last_frame_hash:
-            return "", None, False
-        self._last_frame_hash = frame_hash
+        if (
+            self._last_frame_hash is not None
+            and frame_hash == self._last_frame_hash
+        ):
+            return self._last_capture_result
 
         # Convert to numpy array (mss returns BGRA)
         img_bgr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(sct_img.height, sct_img.width, 4)
         img_bgr = cv2.cvtColor(img_bgr, cv2.COLOR_BGRA2BGR)
         
+        # NEW: Remove border pixels to avoid detecting the overlay's own border colors
+        border_px = 12
+        if img_bgr.shape[0] > border_px * 2 and img_bgr.shape[1] > border_px * 2:
+            img_bgr = img_bgr[border_px:-border_px, border_px:-border_px]
+
         # OPTIMIZATION: Do color masking directly on the raw, non-upscaled image first!
         hsv_small = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
         
@@ -262,7 +347,10 @@ class ScreenReader:
         if cv2.countNonZero(mask_yellow_small) <= 100 and \
            cv2.countNonZero(mask_blue_small) <= 100 and \
            cv2.countNonZero(mask_red_small) <= 100:
-            return "", None, False
+            res = ("", None, False)
+            self._last_capture_result = res
+            self._last_frame_hash = frame_hash
+            return res
 
         # Upscale for better OCR (2x is enough for performance)
         # Use INTER_NEAREST for speed if resolution is decent
@@ -283,22 +371,21 @@ class ScreenReader:
         red_pixels = cv2.countNonZero(mask_red_full)
 
         # 2. PROMPT EXTRACTION (Balanced Cropping)
-        # Vertical: Crop to top 35% (Stricter than 38% to be safe)
-        crop_h = int(img_large.shape[0] * 0.35)
-        # Horizontal: Center 40% (ignore names/noise at edges)
-        large_w = img_large.shape[1]
-        crop_x_start = int(large_w * 0.30)
-        crop_x_end = int(large_w * 0.70)
-        
-        img_cropped = img_large[0:crop_h, crop_x_start:crop_x_end]
-        hsv_cropped = cv2.cvtColor(img_cropped, cv2.COLOR_BGR2HSV)
+        # We divide the image into Top Zone (Prompt) and Bottom Zone (Turn Indicator)
+        # Vertical: Prompt is usually in the upper 60%
+        h, w = img_large.shape[:2]
+        prompt_zone = img_large[0:int(h * 0.65), :]
+        turn_zone = img_large[int(h * 0.55):, :] # Overlap slightly for robustness
+
+        # Focus prompt extraction on the prompt_zone
+        hsv_cropped = cv2.cvtColor(prompt_zone, cv2.COLOR_BGR2HSV)
         
         # White letters (Prompt)
         lower_white = np.array([0, 0, 180])
         upper_white = np.array([180, 50, 255])
         mask_white = cv2.inRange(hsv_cropped, lower_white, upper_white)
         
-        # Mask for Yellow/Blue/Red buttons inside cropped area
+        # Mask for Yellow/Blue/Red buttons inside prompt area (to exclude them from text OCR)
         mask_yellow_crop = cv2.inRange(hsv_cropped, lower_yellow, upper_yellow)
         mask_blue_crop = cv2.inRange(hsv_cropped, lower_blue, upper_blue)
         mask_red_crop = cv2.bitwise_or(cv2.inRange(hsv_cropped, lower_red1, upper_red1), 
@@ -312,10 +399,7 @@ class ScreenReader:
         denoised = cv2.medianBlur(combined_mask, 3)
         
         # Final sharpening and thresholding for Tesseract
-        # Since text is white on black, we invert to black on white for Tesseract
         final_processed = cv2.bitwise_not(denoised)
-        
-        # Adaptive Thresholding for cleaner edges
         final_processed = cv2.threshold(final_processed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
         self._last_processed_img = final_processed
@@ -328,68 +412,53 @@ class ScreenReader:
                 logger.error(f"Failed to save debug screenshot: {e}")
         
         # Convert back to PIL for Tesseract
-        pil_to_ocr = Image.fromarray(final_processed)
+        prompt_pil_to_ocr = Image.fromarray(final_processed)
         
         # OCR with Portuguese and English
         tess_lang = 'por+eng'
-        # PSM 7: Usually the prompt is a single line/blob in the cropped area
         tessdata_path = os.path.abspath('tessdata').replace('\\', '/')
-        # On Windows, Tesseract sometimes struggles with quotes in --tessdata-dir if there are no spaces
-        # We use a normalized path with forward slashes which Tesseract handles better
         config = f'--tessdata-dir {tessdata_path} --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz '
-        full_text = pytesseract.image_to_string(pil_to_ocr, lang=tess_lang, config=config).strip().upper()
+
+        # Detect "SUA VEZ" or "YOUR TURN" specifically in the TURN ZONE
+        hsv_turn = cv2.cvtColor(turn_zone, cv2.COLOR_BGR2HSV)
+        mask_yellow_turn = cv2.countNonZero(cv2.inRange(hsv_turn, lower_yellow, upper_yellow))
+        mask_blue_turn = cv2.countNonZero(cv2.inRange(hsv_turn, lower_blue, upper_blue))
+        mask_red_turn = cv2.countNonZero(cv2.bitwise_or(cv2.inRange(hsv_turn, lower_red1, upper_red1),
+                                                         cv2.inRange(hsv_turn, lower_red2, upper_red2)))
+
+        # OCR check on the whole image (or just bottom) to confirm keywords
+        full_pil = Image.fromarray(cv2.bitwise_not(cv2.threshold(cv2.cvtColor(img_large, cv2.COLOR_BGR2GRAY), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]))
+        full_text = pytesseract.image_to_string(full_pil, lang=tess_lang, config=config).strip().upper()
         
         logger.debug(f"OCR RAW: '{full_text}'")
 
-        # Detect "SUA VEZ" or "YOUR TURN"
-        # yellow_pixels and blue_pixels were already calculated above
-        
         # Higher thresholds to avoid false positives from background pixels
-        # On a 3x upscaled 329x161 image, a real button has >1000 colored pixels
-        color_detected = yellow_pixels > 1000 or blue_pixels > 1000 or red_pixels > 1000
+        color_detected = mask_yellow_turn > 1000 or mask_blue_turn > 1000 or mask_red_turn > 1000
         
         # Method 2: OCR Keywords (Fallback)
         turn_keywords = ["VEZ", "TURN", "YOUR", "SUA", "VE2", "UEZ"]
         keyword_detected = any(kw in full_text for kw in turn_keywords)
-        
-        # Decoupled turn detection from OCR success
-        # STRICTER VALIDATION: 
-        # - >5000 pixels: High confidence color detect
-        # - 1500-5000 pixels: Needs keyword (SUA VEZ) to confirm
-        # - <1500 pixels: Always ignore (UI noise/player names)
-        
-        if (yellow_pixels > 10000 or blue_pixels > 10000 or red_pixels > 10000):
+
+        turn_candidate = False
+        if (mask_yellow_turn > 8000 or mask_blue_turn > 8000 or mask_red_turn > 8000):
+            turn_candidate = True
+        elif (mask_yellow_turn > 2000 or mask_blue_turn > 2000 or mask_red_turn > 2000) and keyword_detected:
+            turn_candidate = True
+
+        if turn_candidate:
+            self._turn_confirm_streak += 1
+        else:
+            self._turn_confirm_streak = 0
+
+        if self._turn_confirm_streak >= 1: # Faster response for user
             is_my_turn = True
-            logger.debug(f"SUA VEZ validated by high-confidence color! (Y:{yellow_pixels}, B:{blue_pixels}, R:{red_pixels})")
-        elif (yellow_pixels > 2500 or blue_pixels > 2500 or red_pixels > 2500) and keyword_detected:
-            is_my_turn = True
-            logger.debug(f"SUA VEZ validated by color + keyword (Y:{yellow_pixels}, B:{blue_pixels}, R:{red_pixels})")
-        elif keyword_detected and not (yellow_pixels > 1000 or blue_pixels > 1000 or red_pixels > 1000):
-            # If we see the keyword but NO color at all, it's likely a hallucination or another player.
-            logger.debug(f"Ignoring turn keyword: pixels too low (Y:{yellow_pixels}, B:{blue_pixels}, R:{red_pixels})")
+        else:
             is_my_turn = False
 
         # Extract prompt: look for the most likely syllable
         prompt_text = None
-        
-        # UI Keywords: ONLY things that are 100% not prompts
-        ui_keywords = [
-            "SUA", "VEZ", "YOUR", "TURN", "VE2", "UEZ", "VAR", "SORA", "BANE", 
-            "SOLO"
-        ]
-        
-        # Method 2: Joined Candidates (Handle "A N T" -> "ANT")
-        # Split by any whitespace and filter out UI Junk
-        parts = full_text.split()
-        joined_candidates = []
-        for p in parts:
-            clean = ''.join(filter(str.isalpha, p)).upper()
-            if clean and clean not in ui_keywords:
-                joined_candidates.append(clean)
-        
-        # Re-join all fragments into one potential prompt
-        full_candidate = "".join(joined_candidates).lower()
-        
+        full_candidate, candidate_conf = self._extract_prompt_candidate(prompt_pil_to_ocr, tess_lang, config)
+
         if full_candidate and 2 <= len(full_candidate) <= 4:
             # Ghost Prompt Protection: Ensure it's not just a suffix of our last typed word
             # e.g. Typed "BANANA", prompt is "NA" -> likely ghosting
@@ -402,13 +471,22 @@ class ScreenReader:
                     if not color_detected:
                         is_ghost = True
             
-            if not is_ghost:
+            validation_ok = candidate_conf >= 55.0 or (candidate_conf >= 35.0 and color_detected) or (color_detected and keyword_detected)
+
+            if not is_ghost and validation_ok:
                 prompt_text = full_candidate
-                logger.debug(f"Prompt extracted: '{prompt_text}'")
+                logger.debug(
+                    f"Prompt validated by Tesseract: '{prompt_text}' (conf={candidate_conf:.1f}, color={color_detected}, keyword={keyword_detected})"
+                )
             else:
-                logger.debug(f"Ghost prompt '{full_candidate}' ignored (suffix of '{self.last_word_typed}')")
+                logger.debug(
+                    f"Prompt candidate rejected: '{full_candidate}' (conf={candidate_conf:.1f}, color={color_detected}, keyword={keyword_detected}, ghost={is_ghost})"
+                )
         
-        return full_text, prompt_text, is_my_turn
+        payload = ((full_text or "").strip(), prompt_text, bool(is_my_turn))
+        self._last_capture_result = payload
+        self._last_frame_hash = frame_hash
+        return payload
 
     def _watch_loop(self):
         with mss.mss() as sct:
@@ -423,6 +501,7 @@ class ScreenReader:
                     # === CORE LOGIC ===
                     # Only act if "SUA VEZ" is detected
                     if not is_my_turn:
+                        self.preview_prompt = ""
                         if self.suggested_word != "":
                             self.suggested_word = ""
                             self.last_suggested_prompt = ""
@@ -433,24 +512,39 @@ class ScreenReader:
                     
                     # It IS our turn. Extract the prompt.
                     if not prompt_text or len(prompt_text) < 1:
+                        self.preview_prompt = ""
+                        self._prompt_confirm_streak = 0
+                        self._last_prompt_candidate = ""
                         # SUA VEZ is showing but we can't read the prompt clearly
                         time.sleep(0.1)
                         continue
+
+                    if prompt_text == self._last_prompt_candidate:
+                        self._prompt_confirm_streak += 1
+                    else:
+                        self._last_prompt_candidate = prompt_text
+                        self._prompt_confirm_streak = 1
+
+                    if self._prompt_confirm_streak < 2:
+                        time.sleep(0.1)
+                        continue
+
+                    self.preview_prompt = prompt_text
 
                     # PERSISTENCE: If prompt is the same as last time, don't re-calculate or flicker
                     if prompt_text == self.last_suggested_prompt:
                         time.sleep(0.2)
                         continue
                     
-                    self._log(f"SUA VEZ detected! Prompt: '{prompt_text}'")
+                    self._log(f"Prompt validated by Tesseract: '{prompt_text}'")
                     self.last_suggested_prompt = prompt_text
                     self._last_frame_hash = None  # Reset cache — active turn, always want fresh frames
                     
-                    # Check if we should auto-type or just suggest
-                    auto_type = True
+                    # Check if we should auto-type or just suggest (default: suggest only)
+                    auto_type = False
                     if self.autoplay_state:
                         config = self.autoplay_state.snapshot_config()
-                        auto_type = config.get("auto_type", True)
+                        auto_type = config.get("auto_type", False)
 
                     if not auto_type:
                         if self.callback_found_word:
@@ -509,6 +603,7 @@ class ScreenReader:
             "calibration_step": self.calibration_step,
             "regions_set": bool(self.turn_region and self.prompt_region),
             "suggested_word": self.suggested_word,
+            "preview_prompt": self.preview_prompt,
             "turn_region": self.turn_region,
             "prompt_region": self.prompt_region
         }
