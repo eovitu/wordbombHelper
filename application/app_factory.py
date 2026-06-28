@@ -2,6 +2,7 @@ import logging
 import os
 from dataclasses import dataclass
 
+import pytesseract
 from flask import Flask, render_template
 
 from api.routes import create_api_blueprint
@@ -14,6 +15,7 @@ from infrastructure.input.typer import Typer
 from infrastructure.ocr.screen_reader import ScreenReader
 from infrastructure.repositories.presets_repository import FilePresetRepository
 from shared.security import make_optional_auth_required
+from used_word_scanner import UsedWordScanner, OcrSolvePanelSource
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ class AppContext:
     word_service: WordService
     preset_repository: FilePresetRepository
     preset_service: PresetService
+    used_word_scanner: object
     optional_auth_required: object
 
 
@@ -68,6 +71,26 @@ def create_app():
 
     screen_reader.set_callback(on_prompt_found)
     screen_reader.set_log_callback(add_autoplay_log)
+    # Persiste a região calibrada (inclusive via listener de mouse, que antes não salvava).
+    screen_reader.on_region_calibrated = region_store.set_region
+
+    # ── Pipeline B: scanner de palavras-usadas (independente, opcional) ──────────
+    # Região do painel SOLVE persistida em arquivo próprio. Engine/captura próprios.
+    # Se a região não for calibrada ou o OCR falhar, o scanner se autodesativa.
+    solve_region_store = RegionStore(store_file=os.path.join(os.getcwd(), "solve_region.json"))
+    _tess_cmd = pytesseract.pytesseract.tesseract_cmd
+    _tessdata = os.environ.get(
+        "TESSDATA_PREFIX",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tessdata")))
+    _solve_source = OcrSolvePanelSource(solve_region_store, _tess_cmd, _tessdata)
+    used_word_scanner = UsedWordScanner(
+        word_manager, _solve_source,
+        lang_getter=lambda: autoplay_state.snapshot_config().get("lang"),
+        interval=0.75,
+        is_active=lambda: screen_reader.is_watching,  # só varre durante a partida
+    )
+    screen_reader.on_solve_region_calibrated = solve_region_store.set_region
+    used_word_scanner.start()  # thread própria; idle até calibrar + começar a observar
 
     preset_repository = FilePresetRepository(os.path.join(os.path.dirname(__file__), "..", "presets.json"))
     preset_repository.presets_file = os.path.abspath(preset_repository.presets_file)
@@ -82,6 +105,7 @@ def create_app():
                 "autoplay_state": autoplay_state,
                 "preset_service": preset_service,
                 "region_store": region_store,
+                "used_word_scanner": used_word_scanner,
                 "optional_auth_required": optional_auth_required,
             }
         )
@@ -101,5 +125,6 @@ def create_app():
         word_service=word_service,
         preset_repository=preset_repository,
         preset_service=preset_service,
+        used_word_scanner=used_word_scanner,
         optional_auth_required=optional_auth_required,
     )

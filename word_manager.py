@@ -26,6 +26,10 @@ class WordManager:
         self.current_alpha_char = 'a'
         # Cache for resolved language names to avoid repeated normalization
         self._lang_cache = {}
+        # Índice acento-insensível por idioma (lazy): forma_limpa -> forma_real_lower.
+        # Usado pelo scanner de palavras-usadas (Pipeline B) para casar a leitura do OCR
+        # (sem acento, maiúscula) com a entrada real da wordlist. Ver mark_used_ocr.
+        self._clean_index = {}
 
     def _build_initial_targets(self):
         targets = {}
@@ -335,21 +339,76 @@ class WordManager:
     def mark_used(self, word):
         if word:
             with self._lock:
-                w_lower = word.lower()
-                self.used_words.add(w_lower)
-                
-                # Clean accents to proper check against 'a'-'z' targets
-                w_clean = ''.join(c for c in unicodedata.normalize('NFD', w_lower) if unicodedata.category(c) != 'Mn')
-                
-                # Decrease targets for unique letters found in the word
-                for char in set(w_clean):
-                    if char in self.letter_targets:
-                        if self.letter_targets[char] > 0:
-                            self.letter_targets[char] -= 1
-                
-                # If all targets reached 0, reset the cycle back to the target count
-                if all(v == 0 for v in self.letter_targets.values()):
-                    self.letter_targets = self._build_initial_targets()
+                self._mark_used_locked(word)
+
+    def _mark_used_locked(self, word):
+        """Marca a palavra como usada. ASSUME que self._lock já está retido."""
+        w_lower = word.lower()
+        self.used_words.add(w_lower)
+
+        # Clean accents to proper check against 'a'-'z' targets
+        w_clean = ''.join(c for c in unicodedata.normalize('NFD', w_lower) if unicodedata.category(c) != 'Mn')
+
+        # Decrease targets for unique letters found in the word
+        for char in set(w_clean):
+            if char in self.letter_targets and self.letter_targets[char] > 0:
+                self.letter_targets[char] -= 1
+
+        # If all targets reached 0, reset the cycle back to the target count
+        if all(v == 0 for v in self.letter_targets.values()):
+            self.letter_targets = self._build_initial_targets()
+
+    @staticmethod
+    def normalize_token(text):
+        """Minúsculas + sem acento, preservando hífen e apóstrofe (ex: 'PÁU-D'ALHO' -> "pau-d'alho").
+
+        Chave canônica usada para casar leituras de OCR (Pipeline B) com a wordlist."""
+        s = (text or "").strip().lower()
+        s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+        return ''.join(ch for ch in s if ch.isalpha() or ch in "-'")
+
+    def _get_clean_index(self, lang):
+        """Índice acento-insensível (forma_limpa -> forma_real) do idioma, construído lazy.
+
+        IMPORTANTE p/ isolamento Pipeline A↔B: a construção O(n) sobre a wordlist roda FORA
+        do lock — só o load (uma vez) e o armazenamento final o retêm brevemente. Assim o
+        get_word do Pipeline A nunca espera o build do índice do Pipeline B."""
+        with self._lock:
+            resolved = self._resolve_language_name(lang)
+            idx = self._clean_index.get(resolved)
+            if idx is not None:
+                return idx
+            if resolved not in self.wordlists:
+                self._load_language_unsafe(resolved)
+            data = self.wordlists.get(resolved)
+            words_ref = data['lower'] if data else None
+        if words_ref is None:
+            return None
+        # Build pesado SEM segurar o lock (a lista não é mutada após carregada).
+        built = {}
+        for w_lower in words_ref:
+            key = self.normalize_token(w_lower)
+            if key and key not in built:
+                built[key] = w_lower
+        with self._lock:
+            resolved = self._resolve_language_name(lang)  # barato (cacheado)
+            return self._clean_index.setdefault(resolved, built)
+
+    def mark_used_ocr(self, word, lang):
+        """Marca como usada a palavra lida por OCR (Pipeline B), casando-a com a forma real
+        da wordlist de forma acento-insensível. Retorna True se marcou algo agora.
+
+        Idempotente e thread-safe. Não interfere no Pipeline A (só adiciona a used_words)."""
+        key = self.normalize_token(word)
+        if not key or len(key) < 2:
+            return False
+        idx = self._get_clean_index(lang)  # build pesado fica fora do lock
+        target = (idx.get(key) if idx else None) or key  # forma real, ou a limpa (inócua)
+        with self._lock:
+            if target in self.used_words:
+                return False
+            self._mark_used_locked(target)  # check + mark atômicos (sem TOCTOU)
+        return True
 
     def reset_used(self):
         """Resets used words history and clears memory cache of wordlists to force a disk reload."""
@@ -357,6 +416,7 @@ class WordManager:
             self.used_words.clear()
             self.wordlists.clear()
             self.sublists.clear()
+            self._clean_index.clear()
             self._lang_cache.clear()
             self.letter_targets = self._build_initial_targets()
             self.current_alpha_char = 'a'
