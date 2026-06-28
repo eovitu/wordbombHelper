@@ -11,6 +11,11 @@ debug_screenshots/*.jpeg
 debug_screenshots/*.webp
 debug_screenshots/*.bmp
 
+# Logs
+logs/
+
 # Local editor settings
 .vscode/
 
+
+solve_region.json

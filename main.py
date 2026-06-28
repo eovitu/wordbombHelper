@@ -1,10 +1,12 @@
 import logging
 
 from application.app_factory import create_app
+from shared.logging_config import setup_logging
 
-logging.basicConfig(level=logging.INFO)
+# Configura logging (console + arquivo rotativo em logs/wordbomb.log).
+# Nível do console via env WORDBOMB_LOG_LEVEL (default INFO); arquivo sempre em DEBUG.
+setup_logging()
 logger = logging.getLogger(__name__)
-logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 _context = create_app()
 app = _context.app
@@ -33,4 +35,4 @@ def save_presets(presets):
 
 if __name__ == "__main__":
     logger.info("WordBomb Flask on http://127.0.0.1:5000")
-    app.run(debug=False, port=5000, use_reloader=False)
+    app.run(debug=False, port=5000, use_reloader=False, threaded=True)

@@ -37384,7 +37384,6 @@ beija-flor-marrom
 beija-flor-pintado
 beija-flor-preto
 beija-flor-roxo
-beija-flor-roxos
 beija-flor-rubi
 beija-flor-verde
 beija-flor-vermelho
@@ -42608,7 +42607,6 @@ cabecao
 cabecas
 cabecas-de-ouro
 cabecas-de-prego
-cabecea
 cabeceado
 cabeceai
 cabeceais
@@ -72079,7 +72077,6 @@ deixes
 deixo
 deixou
 deja-vu
-dejanira
 dejeto
 dejetos
 dekassegui
@@ -92250,7 +92247,6 @@ distendidos
 distendieis
 distendo
 distensao
-distensaos
 distensoes
 distes
 distincao
@@ -128896,7 +128892,6 @@ ficcaa
 ficcaas
 ficcao
 ficcional
-ficcionalidade
 ficcoes
 ficha
 fichado
@@ -128905,6 +128900,16 @@ fichais
 ficham
 fichamos
 fichando
+BONSMARA
+BONSMARAS
+TRANSMASCULINA
+TRANSMASCULINAS
+TRANSMASCULINIDADE
+ISOGONAIS
+ISOGONAL
+ISOGONICA
+ISOGONICAS
+ISOGONICO
 fichar
 fichara
 ficharam

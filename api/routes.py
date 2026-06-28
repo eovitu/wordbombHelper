@@ -1,6 +1,8 @@
+import json
 import logging
+import time
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, Response, jsonify, stream_with_context
 
 from shared.parsing import json_or_empty
 
@@ -14,6 +16,7 @@ def create_api_blueprint(deps):
     autoplay_state = deps["autoplay_state"]
     preset_service = deps["preset_service"]
     region_store = deps["region_store"]
+    used_word_scanner = deps.get("used_word_scanner")
     optional_auth_required = deps["optional_auth_required"]
 
     bp = Blueprint("api", __name__)
@@ -41,13 +44,19 @@ def create_api_blueprint(deps):
     @optional_auth_required
     def reset_words():
         word_service.reset_words()
+        if used_word_scanner:
+            used_word_scanner.reset()  # esquece palavras aprendidas (novo match)
         return jsonify({"status": "success"})
 
     @bp.route("/api/calibration/start", methods=["POST"])
     @optional_auth_required
     def start_calibration():
-        screen_reader.start_calibration()
-        return jsonify({"status": "started", "step": "turn_start", "message": "Click top-left of 'My Turn' indicator"})
+        data = json_or_empty()
+        target = "solve" if data.get("target") == "solve" else "turn"
+        screen_reader.start_calibration(target=target)
+        msg = ("Clique no canto superior-esquerdo do painel SOLVE" if target == "solve"
+               else "Click top-left of 'My Turn' indicator")
+        return jsonify({"status": "started", "step": "turn_start", "target": target, "message": msg})
 
     @bp.route("/api/calibration/click", methods=["POST"])
     @optional_auth_required
@@ -67,7 +76,9 @@ def create_api_blueprint(deps):
 
         result = screen_reader.handle_calibration_click(x, y)
 
-        if result.get("status") == "done":
+        # Só persiste a região do PROMPT (Pipeline A). Para target=solve, o screen_reader
+        # já persistiu via on_solve_region_calibrated — não tocar no turn_region aqui.
+        if result.get("status") == "done" and result.get("target") != "solve":
             region = result["regions"]["turn_region"]
             try:
                 region_store.set_region(region)
@@ -88,6 +99,34 @@ def create_api_blueprint(deps):
             logger.error("Error toggling auto-play: %s", e)
             return jsonify({"status": "error", "message": str(e)}), 500
 
+    @bp.route("/api/stream")
+    def event_stream():
+        """SSE: empurra atualizações de palavra/preview/status ao cliente sem polling.
+        Verifica mudanças a cada 20ms → latência avg ~10ms vs ~75ms do polling de 150ms.
+        """
+        def generate():
+            last = {}
+            try:
+                while True:
+                    cur = {
+                        "word": screen_reader.suggested_word or "",
+                        "preview": screen_reader.preview_prompt or "",
+                        "status": screen_reader.status,
+                        "watching": screen_reader.is_watching,
+                    }
+                    if cur != last:
+                        last = dict(cur)
+                        yield f"data: {json.dumps(cur)}\n\n"
+                    time.sleep(0.020)
+            except GeneratorExit:
+                pass
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @bp.route("/api/autoplay/status", methods=["GET"])
     def get_autoplay_status():
         state = screen_reader.get_state()
@@ -95,6 +134,9 @@ def create_api_blueprint(deps):
         state["logs"] = autoplay_state.last_logs(10)
         state["autoplay_lang"] = cfg.get("lang")
         state["autoplay_strategy"] = cfg.get("strategy")
+        if used_word_scanner:
+            state["learned_words"] = used_word_scanner.learned_count
+            state["solve_region_set"] = used_word_scanner.source.region_ready()
         return state
 
     @bp.route("/api/autoplay/config", methods=["POST"])

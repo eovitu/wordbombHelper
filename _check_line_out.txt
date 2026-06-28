@@ -1,2 +1,0 @@
-        img_bgr = np.frombuffer(raw_bytes, dtype=np.uint8).reshape(sct_img.height, sct_img.width, 4)
-TOKEN=frombuffer
