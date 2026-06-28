@@ -86,9 +86,11 @@ class OcrSolvePanelSource(UsedWordSource):
         return self._engine_ok
 
     def available(self):
-        if not self._ensure_engine():
+        # Região PRIMEIRO: se o usuário não calibrou o painel SOLVE, nem carregamos o
+        # engine dedicado (~30-50MB). Pipeline B só custa recursos quando de fato em uso.
+        if normalize_capture_region(self.region_store.get_region()) is None:
             return False
-        return normalize_capture_region(self.region_store.get_region()) is not None
+        return self._ensure_engine()
 
     def poll(self):
         coords = normalize_capture_region(self.region_store.get_region())
