@@ -135,6 +135,8 @@ input::placeholder { color: #525252; }
 .log-label { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
 .log-learned { height: 120px; }
 .log-learned div { color: var(--accent); }
+.log-missing { height: 110px; }
+.log-missing div { color: #f59e0b; }
 
 /* Overlay de calibração */
 .overlay {

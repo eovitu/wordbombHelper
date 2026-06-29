@@ -8,11 +8,12 @@ logger = logging.getLogger(__name__)
 
 
 class WordService:
-    def __init__(self, word_manager, typer, screen_reader, autoplay_state):
+    def __init__(self, word_manager, typer, screen_reader, autoplay_state, missing_prompts=None):
         self.word_manager = word_manager
         self.typer = typer
         self.screen_reader = screen_reader
         self.autoplay_state = autoplay_state
+        self.missing_prompts = missing_prompts  # registro de prompts sem palavra (manutenção)
         self.on_word_found_callback = None
 
     def on_prompt_found(self, prompt_text):
@@ -53,6 +54,9 @@ class WordService:
 
         if not word:
             self.autoplay_state.add_log(f"Nenhuma palavra para '{prompt_text}'")
+            # Manutenção do dicionário: prompt já confirmado pelo pipeline, mas sem palavra.
+            if self.missing_prompts:
+                self.missing_prompts.record(prompt_text)
             if self.on_word_found_callback:
                 self.on_word_found_callback("")
             return False

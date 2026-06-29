@@ -7,6 +7,7 @@ from flask import Flask, render_template
 
 from api.routes import create_api_blueprint
 from application.autoplay_state_service import AutoplayStateService
+from application.missing_prompts_store import MissingPromptsStore
 from application.preset_service import PresetService
 from application.region_store import RegionStore
 from application.word_manager import WordManager
@@ -61,7 +62,9 @@ def create_app():
     except Exception:
         pass
 
-    word_service = WordService(word_manager, typer, screen_reader, autoplay_state)
+    missing_prompts = MissingPromptsStore(os.path.join(os.getcwd(), "missing_prompts.json"))
+    word_service = WordService(word_manager, typer, screen_reader, autoplay_state,
+                               missing_prompts=missing_prompts)
 
     def add_autoplay_log(msg):
         autoplay_state.add_log(msg)

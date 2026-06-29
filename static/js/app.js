@@ -247,6 +247,18 @@ async function poll() {
       if (e.id > lastLearnedId) { learnedLog((e.word || '').toUpperCase()); lastLearnedId = e.id; }
     });
   }
+
+  // Prompts sem palavra (manutenção do dicionário) — snapshot ordenado, persiste entre runs.
+  // NÃO é limpo pelo Reset (é dado de manutenção).
+  const ml = $('missing-log');
+  if (ml && s.missing_prompts) {
+    ml.innerHTML = '';
+    s.missing_prompts.forEach((m) => {
+      const line = document.createElement('div');
+      line.textContent = `${(m.prompt || '').toUpperCase()}  ×${m.count}`;
+      ml.appendChild(line);
+    });
+  }
 }
 
 function learnedLog(word) {

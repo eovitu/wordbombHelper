@@ -138,6 +138,8 @@ def create_api_blueprint(deps):
             state["learned_words"] = used_word_scanner.learned_count
             state["solve_region_set"] = used_word_scanner.source.region_ready()
             state["learned_log"] = used_word_scanner.learned_log()
+        if getattr(word_service, "missing_prompts", None):
+            state["missing_prompts"] = word_service.missing_prompts.snapshot()
         return state
 
     @bp.route("/api/autoplay/config", methods=["POST"])
