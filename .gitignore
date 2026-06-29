@@ -20,3 +20,4 @@ logs/
 
 solve_region.json
 missing_prompts.json
+ambiguous_ocr.json

@@ -86,8 +86,16 @@
         <section class="log log-learned" id="learned-log"></section>
 
         <!-- Prompts confirmados sem palavra no dicionário (manutenção; persiste entre execuções) -->
-        <div class="log-label">Prompts sem palavra (faltando no dicionário)</div>
+        <div class="log-label">Prompts sem palavra (faltando no dicionário)
+            <button class="btn-mini" onclick="exportMissing()" title="Baixar TXT (um prompt por linha)">Export TXT</button>
+        </div>
         <section class="log log-missing" id="missing-log"></section>
+
+        <!-- Leituras OCR ambíguas que o Pipeline B NÃO marcou (revisão manual; persiste) -->
+        <div class="log-label">OCR ambíguo (não marcado — revisar)
+            <button class="btn-mini" onclick="exportAmbiguous()" title="Baixar TXT (uma leitura por linha)">Export TXT</button>
+        </div>
+        <section class="log log-ambiguous" id="ambiguous-log"></section>
     </main>
 
     <div id="overlay" class="overlay" hidden>

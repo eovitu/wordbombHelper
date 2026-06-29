@@ -132,11 +132,15 @@ input::placeholder { color: #525252; }
   flex-direction: column-reverse;
 }
 .log div { padding: 1px 0; }
-.log-label { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
+.log-label { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-top: 4px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.btn-mini { background: var(--panel); border: 1px solid var(--line); color: var(--muted); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; text-transform: none; letter-spacing: 0; }
+.btn-mini:hover { border-color: #404040; color: var(--text); }
 .log-learned { height: 120px; }
 .log-learned div { color: var(--accent); }
 .log-missing { height: 110px; }
 .log-missing div { color: #f59e0b; }
+.log-ambiguous { height: 90px; }
+.log-ambiguous div { color: #a78bfa; }
 
 /* Overlay de calibração */
 .overlay {

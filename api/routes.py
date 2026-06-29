@@ -40,6 +40,24 @@ def create_api_blueprint(deps):
         word = word_service.get_word_from_payload(data)
         return jsonify({"word": word})
 
+    @bp.route("/api/missing_prompts/export")
+    def export_missing_prompts():
+        """Exporta os prompts sem palavra como TXT (um por linha, mais frequentes primeiro)."""
+        store = getattr(word_service, "missing_prompts", None)
+        lines = store.ordered_prompts() if store else []
+        body = "\n".join(lines) + ("\n" if lines else "")
+        return Response(body, mimetype="text/plain",
+                        headers={"Content-Disposition": "attachment; filename=missing_prompts.txt"})
+
+    @bp.route("/api/ambiguous_words/export")
+    def export_ambiguous_words():
+        """Exporta as leituras OCR ambíguas (não marcadas) como TXT, para revisão manual."""
+        store = getattr(used_word_scanner, "ambiguous_store", None) if used_word_scanner else None
+        lines = store.ordered_prompts() if store else []
+        body = "\n".join(lines) + ("\n" if lines else "")
+        return Response(body, mimetype="text/plain",
+                        headers={"Content-Disposition": "attachment; filename=ambiguous_ocr.txt"})
+
     @bp.route("/api/reset", methods=["POST"])
     @optional_auth_required
     def reset_words():
@@ -140,6 +158,8 @@ def create_api_blueprint(deps):
             state["learned_log"] = used_word_scanner.learned_log()
         if getattr(word_service, "missing_prompts", None):
             state["missing_prompts"] = word_service.missing_prompts.snapshot()
+        if used_word_scanner and getattr(used_word_scanner, "ambiguous_store", None):
+            state["ambiguous_words"] = used_word_scanner.ambiguous_store.snapshot()
         return state
 
     @bp.route("/api/autoplay/config", methods=["POST"])

@@ -1,3 +1,4 @@
+import bisect
 import os
 import random
 import unicodedata
@@ -26,10 +27,14 @@ class WordManager:
         self.current_alpha_char = 'a'
         # Cache for resolved language names to avoid repeated normalization
         self._lang_cache = {}
-        # Índice acento-insensível por idioma (lazy): forma_limpa -> forma_real_lower.
-        # Usado pelo scanner de palavras-usadas (Pipeline B) para casar a leitura do OCR
-        # (sem acento, maiúscula) com a entrada real da wordlist. Ver mark_used_ocr.
-        self._clean_index = {}
+        # Índices de casamento conservador para o Pipeline B (lazy, por idioma).
+        # Objetivo: ZERO falso positivo — só marcamos uma palavra jogada quando a leitura
+        # do OCR mapeia para UMA única entrada do dicionário sem ambiguidade. Ver
+        # resolve_played_ocr. Construídos fora do lock (não bloqueiam o Pipeline A).
+        self._match_index = {}   # lang -> {clean: real_lower}  (chaves acento-insensíveis)
+        self._match_ambig = {}   # lang -> set(clean com >1 forma real → ambíguo)
+        self._match_by_len = {}  # lang -> {comprimento: [clean...]}  (busca Hamming-1)
+        self._match_sorted = {}  # lang -> [clean...] ordenado  (checagem de superset/prefixo)
 
     def _build_initial_targets(self):
         targets = {}
@@ -367,48 +372,126 @@ class WordManager:
         s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
         return ''.join(ch for ch in s if ch.isalpha() or ch in "-'")
 
-    def _get_clean_index(self, lang):
-        """Índice acento-insensível (forma_limpa -> forma_real) do idioma, construído lazy.
+    def _get_match_indexes(self, lang):
+        """Constrói (lazy) os índices de casamento do idioma e retorna a chave resolvida.
 
-        IMPORTANTE p/ isolamento Pipeline A↔B: a construção O(n) sobre a wordlist roda FORA
-        do lock — só o load (uma vez) e o armazenamento final o retêm brevemente. Assim o
-        get_word do Pipeline A nunca espera o build do índice do Pipeline B."""
+        O build O(n) roda FORA do lock (a wordlist não muda após carregada), então o
+        get_word do Pipeline A nunca espera por ele. Retorna None se o idioma não carregar."""
         with self._lock:
             resolved = self._resolve_language_name(lang)
-            idx = self._clean_index.get(resolved)
-            if idx is not None:
-                return idx
+            if resolved in self._match_index:
+                return resolved
             if resolved not in self.wordlists:
                 self._load_language_unsafe(resolved)
             data = self.wordlists.get(resolved)
             words_ref = data['lower'] if data else None
         if words_ref is None:
             return None
-        # Build pesado SEM segurar o lock (a lista não é mutada após carregada).
-        built = {}
-        for w_lower in words_ref:
-            key = self.normalize_token(w_lower)
-            if key and key not in built:
-                built[key] = w_lower
+        idx, ambig = {}, set()
+        for real in words_ref:
+            c = self.normalize_token(real)
+            if not c:
+                continue
+            cur = idx.get(c)
+            if cur is None:
+                idx[c] = real
+            elif cur != real:
+                ambig.add(c)  # mesma forma limpa, palavras reais diferentes → ambíguo
+        by_len = {}
+        for c in idx:
+            by_len.setdefault(len(c), []).append(c)
+        sorted_keys = sorted(idx.keys())
         with self._lock:
-            resolved = self._resolve_language_name(lang)  # barato (cacheado)
-            return self._clean_index.setdefault(resolved, built)
+            if resolved not in self._match_index:
+                self._match_index[resolved] = idx
+                self._match_ambig[resolved] = ambig
+                self._match_by_len[resolved] = by_len
+                self._match_sorted[resolved] = sorted_keys
+        return resolved
 
-    def mark_used_ocr(self, word, lang):
-        """Marca como usada a palavra lida por OCR (Pipeline B), casando-a com a forma real
-        da wordlist de forma acento-insensível. Retorna True se marcou algo agora.
+    @staticmethod
+    def _has_proper_superset(key, sorted_keys):
+        """True se existe palavra mais longa no dicionário que tem `key` como prefixo
+        (ex.: 'snowboard' → 'snowboards'). OCR pode ter cortado o fim → ambíguo."""
+        i = bisect.bisect_right(sorted_keys, key)
+        return i < len(sorted_keys) and sorted_keys[i].startswith(key)
 
-        Idempotente e thread-safe. Não interfere no Pipeline A (só adiciona a used_words)."""
-        key = self.normalize_token(word)
+    @staticmethod
+    def _unique_hamming1(key, same_len_keys):
+        """Retorna a única chave do dicionário a Hamming-1 de `key` (mesmo tamanho),
+        ou None se houver zero ou múltiplas (ambíguo). Early-exit ao achar a 2ª."""
+        found = None
+        for c in same_len_keys:
+            diff = 0
+            for a, b in zip(key, c):
+                if a != b:
+                    diff += 1
+                    if diff > 1:
+                        break
+            if diff == 1:
+                if found is not None:
+                    return None  # múltiplos candidatos → ambíguo
+                found = c
+        return found
+
+    def resolve_played_ocr(self, ocr_word, lang):
+        """Casa a leitura OCR de uma palavra jogada com a forma canônica do dicionário, de
+        modo CONSERVADOR (prioridade: zero falso positivo). Marca em used_words só quando
+        não-ambíguo. Retorna (status, canonical):
+          'marked'    → casou sem ambiguidade e foi marcada (canonical = palavra real);
+          'ambiguous' → havia mais de uma interpretação plausível → NÃO marcou;
+          'unknown'   → não está no dicionário / sem candidato → NÃO marcou.
+
+        Regras: (1) match exato acento-insensível, aceito só se não houver superset nem
+        forma real duplicada; (2) senão, correção por 1 substituição de MESMO tamanho, aceita
+        só se houver exatamente um candidato. Inserção/remoção (tamanho diferente) é sempre
+        tratada como ambígua."""
+        key = self.normalize_token(ocr_word)
         if not key or len(key) < 2:
-            return False
-        idx = self._get_clean_index(lang)  # build pesado fica fora do lock
-        target = (idx.get(key) if idx else None) or key  # forma real, ou a limpa (inócua)
+            return ("unknown", None)
+        resolved = self._get_match_indexes(lang)
+        if resolved is None:
+            return ("unknown", None)
+        idx = self._match_index[resolved]
+        ambig = self._match_ambig[resolved]
+
+        # (1) Match exato acento-insensível
+        if key in idx:
+            if key in ambig or self._has_proper_superset(key, self._match_sorted[resolved]):
+                return ("ambiguous", None)
+            return (self._commit_match(idx[key]), idx[key])
+
+        # (2) Correção por 1 substituição de mesmo tamanho (único candidato)
+        cand = self._unique_hamming1(key, self._match_by_len[resolved].get(len(key), ()))
+        if cand is not None and cand not in ambig:
+            return (self._commit_match(idx[cand]), idx[cand])
+
+        # Múltiplos candidatos OU nenhum candidato de mesmo tamanho.
+        # Distinguimos "ambíguo" (havia >1) de "unknown" só para o log de manutenção:
+        # _unique_hamming1 já devolveu None para ambos; refazemos um teste barato de existência.
+        if self._any_hamming1(key, self._match_by_len[resolved].get(len(key), ())):
+            return ("ambiguous", None)
+        return ("unknown", None)
+
+    @staticmethod
+    def _any_hamming1(key, same_len_keys):
+        for c in same_len_keys:
+            diff = 0
+            for a, b in zip(key, c):
+                if a != b:
+                    diff += 1
+                    if diff > 1:
+                        break
+            if diff == 1:
+                return True
+        return False
+
+    def _commit_match(self, real):
+        """Marca a forma real como usada (idempotente). Retorna sempre 'marked'."""
         with self._lock:
-            if target in self.used_words:
-                return False
-            self._mark_used_locked(target)  # check + mark atômicos (sem TOCTOU)
-        return True
+            if real not in self.used_words:
+                self._mark_used_locked(real)
+        return "marked"
 
     def reset_used(self):
         """Resets used words history and clears memory cache of wordlists to force a disk reload."""
@@ -416,7 +499,10 @@ class WordManager:
             self.used_words.clear()
             self.wordlists.clear()
             self.sublists.clear()
-            self._clean_index.clear()
+            self._match_index.clear()
+            self._match_ambig.clear()
+            self._match_by_len.clear()
+            self._match_sorted.clear()
             self._lang_cache.clear()
             self.letter_targets = self._build_initial_targets()
             self.current_alpha_char = 'a'

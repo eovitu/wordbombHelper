@@ -136,6 +136,15 @@ async function resetWords() {
   } catch {}
 }
 
+function exportMissing() {
+  // Content-Disposition: attachment → o navegador baixa sem sair da página.
+  window.location.href = '/api/missing_prompts/export';
+}
+
+function exportAmbiguous() {
+  window.location.href = '/api/ambiguous_words/export';
+}
+
 /* ---------- Calibração ---------- */
 async function calibrate(target) {
   try {
@@ -257,6 +266,17 @@ async function poll() {
       const line = document.createElement('div');
       line.textContent = `${(m.prompt || '').toUpperCase()}  ×${m.count}`;
       ml.appendChild(line);
+    });
+  }
+
+  // OCR ambíguo não marcado (manutenção) — snapshot ordenado, persiste. Não limpo pelo Reset.
+  const al = $('ambiguous-log');
+  if (al && s.ambiguous_words) {
+    al.innerHTML = '';
+    s.ambiguous_words.forEach((m) => {
+      const line = document.createElement('div');
+      line.textContent = `${(m.prompt || '').toUpperCase()}  ×${m.count}`;
+      al.appendChild(line);
     });
   }
 }

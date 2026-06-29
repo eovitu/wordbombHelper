@@ -86,11 +86,14 @@ def create_app():
         "TESSDATA_PREFIX",
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tessdata")))
     _solve_source = OcrSolvePanelSource(solve_region_store, _tess_cmd, _tessdata)
+    # Registro persistente de leituras ambíguas (conservador não marcou) p/ revisão manual.
+    ambiguous_store = MissingPromptsStore(os.path.join(os.getcwd(), "ambiguous_ocr.json"))
     used_word_scanner = UsedWordScanner(
         word_manager, _solve_source,
         lang_getter=lambda: autoplay_state.snapshot_config().get("lang"),
         interval=0.45,  # polling de fundo (aprende continuamente durante a partida)
         is_active=lambda: screen_reader.is_watching,  # só varre durante a partida
+        ambiguous_store=ambiguous_store,
     )
     screen_reader.on_solve_region_calibrated = solve_region_store.set_region
     # Catch-up dirigido por evento: ao iniciar meu turno, A pede um scan e espera ≤180ms.

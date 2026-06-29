@@ -142,12 +142,14 @@ class OcrSolvePanelSource(UsedWordSource):
 class UsedWordScanner:
     """Laço de fundo que aprende palavras já jogadas e as marca no WordManager."""
 
-    def __init__(self, word_manager, source, lang_getter, interval=0.75, is_active=None):
+    def __init__(self, word_manager, source, lang_getter, interval=0.75, is_active=None,
+                 ambiguous_store=None):
         self.word_manager = word_manager
         self.source = source
         self.lang_getter = lang_getter          # callable -> idioma atual (str)
         self.interval = interval                # segundos entre varreduras (0.5-1.0)
         self.is_active = is_active              # callable -> só varre se True (ex: em partida)
+        self.ambiguous_store = ambiguous_store  # registro de leituras ambíguas (manutenção)
         self._seen = set()                      # chaves já marcadas (dedup)
         self._thread = None
         self._stop = threading.Event()
@@ -225,15 +227,19 @@ class UsedWordScanner:
                 continue
             self._seen.add(key)  # marca como vista mesmo se não casar (evita reprocesso)
             try:
-                if self.word_manager.mark_used_ocr(raw, lang):
+                status, canonical = self.word_manager.resolve_played_ocr(raw, lang)
+                if status == "marked":
                     self.learned_count += 1
                     with self._learned_lock:
                         self._learned_seq += 1
-                        self._learned_log.append({"id": self._learned_seq, "word": key})
+                        self._learned_log.append({"id": self._learned_seq, "word": canonical})
                         if len(self._learned_log) > 50:
                             self._learned_log.pop(0)
+                elif status == "ambiguous" and self.ambiguous_store:
+                    # Conservador: não marcamos. Registramos p/ o usuário revisar depois.
+                    self.ambiguous_store.record(key)
             except Exception as exc:
-                logger.debug("Pipeline B: erro ao marcar '%s' (%s)", key, exc)
+                logger.debug("Pipeline B: erro ao resolver '%s' (%s)", key, exc)
         # Sinaliza conclusão deste scan (acorda quem pediu catch-up).
         with self._cv:
             self._scan_seq += 1
