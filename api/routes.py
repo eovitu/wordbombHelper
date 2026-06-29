@@ -137,6 +137,7 @@ def create_api_blueprint(deps):
         if used_word_scanner:
             state["learned_words"] = used_word_scanner.learned_count
             state["solve_region_set"] = used_word_scanner.source.region_ready()
+            state["learned_log"] = used_word_scanner.learned_log()
         return state
 
     @bp.route("/api/autoplay/config", methods=["POST"])

@@ -126,7 +126,14 @@ function setToggle(active) {
 }
 
 async function resetWords() {
-  try { await fetch('/api/reset', { method: 'POST' }); log('Palavras usadas resetadas'); } catch {}
+  try {
+    await fetch('/api/reset', { method: 'POST' });
+    // Limpa as DUAS logs na tela (prompt + aprendidas). Os high-water-marks de id
+    // continuam altos, então entradas antigas do backend não voltam a aparecer.
+    const lg = $('log'); if (lg) lg.innerHTML = '';
+    const ll = $('learned-log'); if (ll) ll.innerHTML = '';
+    log('Palavras usadas resetadas');
+  } catch {}
 }
 
 /* ---------- Calibração ---------- */
@@ -194,6 +201,7 @@ function applyRealtimeUpdate(s) {
 
 /* ---------- Polling periódico — logs + calibração + fallback se SSE falhar ---------- */
 let lastLogId = 0;
+let lastLearnedId = 0;
 let wasCalibrating = false;
 
 async function poll() {
@@ -232,6 +240,23 @@ async function poll() {
       if (id > lastLogId) { log(msg); lastLogId = id; }
     });
   }
+
+  // Log de palavras aprendidas (Pipeline B) — incremental por id
+  if (s.learned_log) {
+    s.learned_log.forEach((e) => {
+      if (e.id > lastLearnedId) { learnedLog((e.word || '').toUpperCase()); lastLearnedId = e.id; }
+    });
+  }
+}
+
+function learnedLog(word) {
+  const box = $('learned-log');
+  if (!box) return;
+  const line = document.createElement('div');
+  const t = new Date().toLocaleTimeString('pt-BR', { hour12: false });
+  line.textContent = `${t}  ${word}`;
+  box.prepend(line);
+  while (box.childElementCount > 40) box.removeChild(box.lastChild);
 }
 
 function log(msg) {

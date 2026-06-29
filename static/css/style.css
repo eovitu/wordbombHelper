@@ -132,6 +132,9 @@ input::placeholder { color: #525252; }
   flex-direction: column-reverse;
 }
 .log div { padding: 1px 0; }
+.log-label { font-size: 12px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; margin-top: 4px; }
+.log-learned { height: 120px; }
+.log-learned div { color: var(--accent); }
 
 /* Overlay de calibração */
 .overlay {

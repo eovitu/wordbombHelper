@@ -153,6 +153,11 @@ class UsedWordScanner:
         self._stop = threading.Event()
         self._idle_warned = False
         self.learned_count = 0
+        # Log das palavras aprendidas (para exibir na tela). seq cresce sempre (mesmo após
+        # reset) para o front usar high-water-mark e não re-renderizar entradas antigas.
+        self._learned_log = []
+        self._learned_seq = 0
+        self._learned_lock = threading.Lock()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -173,6 +178,13 @@ class UsedWordScanner:
         """Esquece as palavras aprendidas (novo match)."""
         self._seen.clear()
         self.learned_count = 0
+        with self._learned_lock:
+            self._learned_log.clear()  # seq NÃO zera (high-water-mark do front)
+
+    def learned_log(self, count=30):
+        """Snapshot das últimas palavras aprendidas (para exibição na tela)."""
+        with self._learned_lock:
+            return list(self._learned_log[-count:])
 
     def _run(self):
         while not self._stop.is_set():
@@ -199,6 +211,11 @@ class UsedWordScanner:
                     try:
                         if self.word_manager.mark_used_ocr(raw, lang):
                             self.learned_count += 1
+                            with self._learned_lock:
+                                self._learned_seq += 1
+                                self._learned_log.append({"id": self._learned_seq, "word": key})
+                                if len(self._learned_log) > 50:
+                                    self._learned_log.pop(0)
                             logger.debug("Pipeline B: '%s' marcada como usada", key)
                     except Exception as exc:
                         logger.debug("Pipeline B: erro ao marcar '%s' (%s)", key, exc)
