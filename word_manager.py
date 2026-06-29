@@ -157,182 +157,231 @@ class WordManager:
     def get_word(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix='', finish_with_letters='', suffix=''):
         """
         Finds a word containing the prompt string or starting with a prefix.
-        
+
         strategies: 'random', 'shortest', 'longest', 'hyphen', 'alpha', 'recover'
         """
         with self._lock:
-            lang = self._resolve_language_name(lang)
-            if lang not in self.wordlists:
-                self._load_language_unsafe(lang)
-            if lang not in self.wordlists:
-                return None
-
-            prompt = prompt.lower()
-
-            # If a priority sub-list is set, try it first, then fall back to main list
-            if priority_sublist and lang in self.sublists and priority_sublist in self.sublists[lang]:
-                sub_data = self.sublists[lang][priority_sublist]
-                sub_matches = [
-                    sub_data['full'][i]
-                    for i, word_lower in enumerate(sub_data['lower'])
-                    if prompt in word_lower
-                    and min_len <= len(word_lower) <= max_len
-                    and word_lower not in self.used_words
-                ]
-                if sub_matches:
-                    # Found in sub-list — use it directly (skip all other filters for simplicity)
-                    return random.choice(sub_matches)
-
-            # Define filter parameters early to avoid doing it per string
-            min_len_valid = min_len > 1
-            max_len_valid = max_len < 46
-            has_len_filter = min_len_valid or max_len_valid
-
-            # Optimize search using pre-lowercased list and length index
-            data = self.wordlists[lang]
-            len_map = data.get('len_map', {})
-        
-            candidates = []
-            prefix_lower = prefix.lower() if prefix else ''
-            suffix_lower = suffix.lower() if suffix else ''
-        
-            # If length filters are active, only iterate through matching lengths
-            target_indices = []
-            if has_len_filter:
-                for length in range(min_len, max_len + 1):
-                    if length in len_map:
-                        target_indices.extend(len_map[length])
-            else:
-                # Fallback to full list if no length filter (rare in practice)
-                target_indices = range(len(data['lower']))
-
-            if prefix_lower or suffix_lower:
-                for i in target_indices:
-                    word_lower = data['lower'][i]
-                    if ((not prefix_lower or word_lower.startswith(prefix_lower)) and 
-                        (not suffix_lower or word_lower.endswith(suffix_lower)) and 
-                        word_lower not in self.used_words):
-                        candidates.append(data['full'][i])
-            else:
-                for i in target_indices:
-                    word_lower = data['lower'][i]
-                    if prompt in word_lower and word_lower not in self.used_words:
-                        candidates.append(data['full'][i])
-
+            candidates, is_sublist = self._produce_candidates_locked(
+                prompt, lang, min_len, max_len, priority_min_len, priority_max_len,
+                priority_letters, exclude_letters, starts_with_letters, finish_with_letters,
+                priority_sublist, prefix, suffix)
             if not candidates:
                 return None
+            return self._pick_locked(candidates, is_sublist, strategy,
+                                     exclude_letters, starts_with_letters)
 
-            # Prepare exclude set
-            exclude_chars = self._parse_letter_set(exclude_letters)
+    def get_candidates(self, prompt, lang='en', min_len=1, max_len=46, strategy='random', priority_letters='', exclude_letters='', starts_with_letters='', priority_min_len=1, priority_max_len=46, priority_sublist='', prefix='', finish_with_letters='', suffix=''):
+        """Lista ORDENADA de candidatos para a sessão de sugestões (feature Reroll).
 
-            # Filter out exclude_chars from beginning of words, UNLESS it empties the list
-            if exclude_chars:
-                filtered = [w for w in candidates if w.lower()[0] not in exclude_chars]
-                candidates = filtered if filtered else candidates
+        Calcula a busca UMA vez (mesmo filtro pesado do get_word) e devolve
+        [escolha_primária] + alternativas embaralhadas. O índice 0 é exatamente o que o
+        solver escolheria (get_word), então a navegação por índice (R/Shift+R) não refaz
+        nenhuma busca. NÃO marca nada como usada."""
+        with self._lock:
+            candidates, is_sublist = self._produce_candidates_locked(
+                prompt, lang, min_len, max_len, priority_min_len, priority_max_len,
+                priority_letters, exclude_letters, starts_with_letters, finish_with_letters,
+                priority_sublist, prefix, suffix)
+            if not candidates:
+                return []
+            primary = self._pick_locked(candidates, is_sublist, strategy,
+                                        exclude_letters, starts_with_letters)
+            rest = list(candidates)
+            try:
+                rest.remove(primary)
+            except ValueError:
+                pass
+            random.shuffle(rest)
+            return [primary] + rest
 
-            # Pre-filter (Starts With):
+    def _produce_candidates_locked(self, prompt, lang, min_len, max_len, priority_min_len,
+                                   priority_max_len, priority_letters, exclude_letters,
+                                   starts_with_letters, finish_with_letters, priority_sublist,
+                                   prefix, suffix):
+        """Filtro pesado compartilhado por get_word e get_candidates. ASSUME lock retido.
+        Retorna (candidatos, is_sublist). Lista vazia se nada casar."""
+        lang = self._resolve_language_name(lang)
+        if lang not in self.wordlists:
+            self._load_language_unsafe(lang)
+        if lang not in self.wordlists:
+            return [], False
+
+        prompt = prompt.lower()
+
+        # If a priority sub-list is set, try it first, then fall back to main list
+        if priority_sublist and lang in self.sublists and priority_sublist in self.sublists[lang]:
+            sub_data = self.sublists[lang][priority_sublist]
+            sub_matches = [
+                sub_data['full'][i]
+                for i, word_lower in enumerate(sub_data['lower'])
+                if prompt in word_lower
+                and min_len <= len(word_lower) <= max_len
+                and word_lower not in self.used_words
+            ]
+            if sub_matches:
+                # Found in sub-list — use it directly (skip all other filters for simplicity)
+                return sub_matches, True
+
+        # Define filter parameters early to avoid doing it per string
+        min_len_valid = min_len > 1
+        max_len_valid = max_len < 46
+        has_len_filter = min_len_valid or max_len_valid
+
+        # Optimize search using pre-lowercased list and length index
+        data = self.wordlists[lang]
+        len_map = data.get('len_map', {})
+
+        candidates = []
+        prefix_lower = prefix.lower() if prefix else ''
+        suffix_lower = suffix.lower() if suffix else ''
+
+        # If length filters are active, only iterate through matching lengths
+        target_indices = []
+        if has_len_filter:
+            for length in range(min_len, max_len + 1):
+                if length in len_map:
+                    target_indices.extend(len_map[length])
+        else:
+            # Fallback to full list if no length filter (rare in practice)
+            target_indices = range(len(data['lower']))
+
+        if prefix_lower or suffix_lower:
+            for i in target_indices:
+                word_lower = data['lower'][i]
+                if ((not prefix_lower or word_lower.startswith(prefix_lower)) and
+                    (not suffix_lower or word_lower.endswith(suffix_lower)) and
+                    word_lower not in self.used_words):
+                    candidates.append(data['full'][i])
+        else:
+            for i in target_indices:
+                word_lower = data['lower'][i]
+                if prompt in word_lower and word_lower not in self.used_words:
+                    candidates.append(data['full'][i])
+
+        if not candidates:
+            return [], False
+
+        # Prepare exclude set
+        exclude_chars = self._parse_letter_set(exclude_letters)
+
+        # Filter out exclude_chars from beginning of words, UNLESS it empties the list
+        if exclude_chars:
+            filtered = [w for w in candidates if w.lower()[0] not in exclude_chars]
+            candidates = filtered if filtered else candidates
+
+        # Pre-filter (Starts With):
+        starts_chars = self._parse_letter_set(starts_with_letters)
+        if starts_chars:
+            starts_filtered = [w for w in candidates if w.lower()[0] in starts_chars]
+            if starts_filtered:
+                # Only restrict if there are actually matches for the start letter
+                candidates = starts_filtered
+
+        # Pre-filter (Ends With):
+        finish_chars = self._parse_letter_set(finish_with_letters)
+        if finish_chars:
+            finish_filtered = [w for w in candidates if w.lower()[-1] in finish_chars]
+            if finish_filtered:
+                # Only restrict if there are actually matches for the end letter
+                candidates = finish_filtered
+
+        # Pre-filter (Priority Length):
+        if priority_min_len > 1 or priority_max_len < 46:
+            len_filtered = [w for w in candidates if priority_min_len <= len(w) <= priority_max_len]
+            if len_filtered:
+                candidates = len_filtered
+
+        # Pre-filter: Priority Letters Filtering (Contains)
+        pri_chars = self._parse_letter_set(priority_letters)
+        if pri_chars:
+            # Score candidates
+            scored = []
+            for w in candidates:
+                w_lower = w.lower()
+                score = sum(1 for c in pri_chars if c in w_lower)
+                scored.append((score, w))
+
+            # Find the top score available
+            top_score = max((score for score, w in scored), default=0)
+            if top_score > 0:
+                # Override candidates with only the tied top scorers
+                candidates = [w for s, w in scored if s == top_score]
+
+        return candidates, False
+
+    def _pick_locked(self, candidates, is_sublist, strategy, exclude_letters, starts_with_letters):
+        """Escolhe UMA palavra dentre os candidatos já filtrados. ASSUME lock retido.
+        Lógica de estratégia idêntica à versão anterior do get_word."""
+        if is_sublist:
+            return random.choice(candidates)
+
+        exclude_chars = self._parse_letter_set(exclude_letters)
+
+        # Apply strategy
+        if strategy == 'shortest':
+            candidates.sort(key=len)
+            # Pick from the top few to avoid always being the same
+            return candidates[0]
+        elif strategy == 'longest':
+            candidates.sort(key=len, reverse=True)
+            return candidates[0]
+        elif strategy == 'hyphen':
+            hyphenated = [w for w in candidates if '-' in w]
+            if hyphenated:
+                return random.choice(hyphenated)
+            # Fallback to random if no hyphens
+            return random.choice(candidates)
+        elif strategy == 'alpha':
             starts_chars = self._parse_letter_set(starts_with_letters)
+
+            # If a Starts With letter is being enforced, just return a random candidate and DO NOT advance
+            # so we resume the alphabet right where we left off when the priority is removed.
             if starts_chars:
-                starts_filtered = [w for w in candidates if w.lower()[0] in starts_chars]
-                if starts_filtered:
-                    # Only restrict if there are actually matches for the start letter
-                    candidates = starts_filtered
-
-            # Pre-filter (Ends With):
-            finish_chars = self._parse_letter_set(finish_with_letters)
-            if finish_chars:
-                finish_filtered = [w for w in candidates if w.lower()[-1] in finish_chars]
-                if finish_filtered:
-                    # Only restrict if there are actually matches for the end letter
-                    candidates = finish_filtered
-
-            # Pre-filter (Priority Length):
-            if priority_min_len > 1 or priority_max_len < 46:
-                len_filtered = [w for w in candidates if priority_min_len <= len(w) <= priority_max_len]
-                if len_filtered:
-                    candidates = len_filtered
-
-            # Pre-filter: Priority Letters Filtering (Contains)
-            pri_chars = self._parse_letter_set(priority_letters)
-            if pri_chars:
-                # Score candidates
-                scored = []
-                for w in candidates:
-                    w_lower = w.lower()
-                    score = sum(1 for c in pri_chars if c in w_lower)
-                    scored.append((score, w))
-                
-                # Find the top score available
-                top_score = max((score for score, w in scored), default=0)
-                if top_score > 0:
-                    # Override candidates with only the tied top scorers
-                    candidates = [w for s, w in scored if s == top_score]
-
-            # Apply strategy
-            if strategy == 'shortest':
-                candidates.sort(key=len)
-                # Pick from the top few to avoid always being the same
-                return candidates[0]
-            elif strategy == 'longest':
-                candidates.sort(key=len, reverse=True)
-                return candidates[0]
-            elif strategy == 'hyphen':
-                hyphenated = [w for w in candidates if '-' in w]
-                if hyphenated:
-                    return random.choice(hyphenated)
-                # Fallback to random if no hyphens
                 return random.choice(candidates)
-            elif strategy == 'alpha':
-                starts_chars = self._parse_letter_set(starts_with_letters)
-                
-                # If a Starts With letter is being enforced, just return a random candidate and DO NOT advance
-                # so we resume the alphabet right where we left off when the priority is removed.
-                if starts_chars:
-                    return random.choice(candidates)
-                    
-                # Skip current character if it is in the excluded list
-                if exclude_chars and len(exclude_chars) < 26:
-                    while self.current_alpha_char in exclude_chars:
-                        self._advance_alpha_char()
-                
-                # Filter for words starting with current_alpha_char
-                alpha_candidates = [w for w in candidates if w.lower().startswith(self.current_alpha_char)]
-                
-                if alpha_candidates:
-                    word = random.choice(alpha_candidates)
-                    # Advance char
+
+            # Skip current character if it is in the excluded list
+            if exclude_chars and len(exclude_chars) < 26:
+                while self.current_alpha_char in exclude_chars:
                     self._advance_alpha_char()
-                    return word
-                else:
-                    # Fallback to random, do NOT advance char
-                    return random.choice(candidates)
-            elif strategy == 'recover':
-                scored_candidates = []
-                for w in candidates:
-                    w_lower = w.lower()
-                    w_clean = ''.join(c for c in unicodedata.normalize('NFD', w_lower) if unicodedata.category(c) != 'Mn')
-                    unique_word_letters = set(w_clean)
-                    
-                    # Score correlates to how badly the letters are needed (target remaining)
-                    # Only score letters that are actually in our target dictionary!
-                    score = sum(self.letter_targets[c] for c in unique_word_letters if c in self.letter_targets)
-                    scored_candidates.append((score, w))
-                
-                if not scored_candidates:
-                    return random.choice(candidates)
-                
-                # Find the maximum score
-                best_score = max(score for score, w in scored_candidates)
-                
-                if best_score > 0:
-                    # Filter out ones with the best score and pick randomly among them
-                    best_words = [w for s, w in scored_candidates if s == best_score]
-                    return random.choice(best_words)
-                else:
-                    # Fallback to random if no candidate helps
-                    return random.choice(candidates)
-            else: # random
+
+            # Filter for words starting with current_alpha_char
+            alpha_candidates = [w for w in candidates if w.lower().startswith(self.current_alpha_char)]
+
+            if alpha_candidates:
+                word = random.choice(alpha_candidates)
+                # Advance char
+                self._advance_alpha_char()
+                return word
+            else:
+                # Fallback to random, do NOT advance char
                 return random.choice(candidates)
+        elif strategy == 'recover':
+            scored_candidates = []
+            for w in candidates:
+                w_lower = w.lower()
+                w_clean = ''.join(c for c in unicodedata.normalize('NFD', w_lower) if unicodedata.category(c) != 'Mn')
+                unique_word_letters = set(w_clean)
+
+                # Score correlates to how badly the letters are needed (target remaining)
+                # Only score letters that are actually in our target dictionary!
+                score = sum(self.letter_targets[c] for c in unique_word_letters if c in self.letter_targets)
+                scored_candidates.append((score, w))
+
+            if not scored_candidates:
+                return random.choice(candidates)
+
+            # Find the maximum score
+            best_score = max(score for score, w in scored_candidates)
+
+            if best_score > 0:
+                # Filter out ones with the best score and pick randomly among them
+                best_words = [w for s, w in scored_candidates if s == best_score]
+                return random.choice(best_words)
+            else:
+                # Fallback to random if no candidate helps
+                return random.choice(candidates)
+        else:  # random
+            return random.choice(candidates)
             
     def _advance_alpha_char(self):
         # Cycle 'a' -> 'z' -> 'a'

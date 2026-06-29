@@ -81,6 +81,9 @@ class ScreenReader:
         self.suggested_word = ""
         self.preview_prompt = ""
         self.last_suggested_prompt = ""
+        # Posição na sessão de sugestões (feature Reroll); escrito pelo WordService, lido pela UI.
+        self.suggestion_index = 0
+        self.suggestion_total = 0
 
         # ── Parâmetros de detecção ───────────────────────────────────────────
         self.turn_keywords = ["SUA VEZ", "SUAVEZ", "VEZ", "YOUR TURN", "YOURTURN", "TURN", "YOUR", "SUA"]
@@ -726,6 +729,8 @@ class ScreenReader:
             "regions_set": bool(self.turn_region and self.prompt_region),
             "suggested_word": self.suggested_word,
             "preview_prompt": self.preview_prompt,
+            "suggestion_index": self.suggestion_index,
+            "suggestion_total": self.suggestion_total,
             "turn_region": self.turn_region,
             "prompt_region": self.prompt_region,
         }

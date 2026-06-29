@@ -77,6 +77,27 @@ def create_app():
     # Persiste a região calibrada (inclusive via listener de mouse, que antes não salvava).
     screen_reader.on_region_calibrated = region_store.set_region
 
+    # ── Reroll: hotkeys globais R (próxima) / Shift+R (anterior) ─────────────────
+    # Reusa o hook global do pacote `keyboard` (já usado pelo Typer) — não cria thread nova.
+    # Apenas navega a sessão de sugestões (índice±1); não marca nada, não toca OCR/Pipeline B.
+    # Nota: é global, então digitar 'r' avança a sessão — inofensivo (reseta no próximo prompt).
+    try:
+        import keyboard
+
+        def _on_r_key(_event):
+            try:
+                if keyboard.is_pressed("shift"):
+                    word_service.reroll_prev()
+                else:
+                    word_service.reroll_next()
+            except Exception:
+                pass
+
+        keyboard.on_press_key("r", _on_r_key)
+        logger.info("Reroll hotkeys ativos (R = próxima, Shift+R = anterior)")
+    except Exception as exc:
+        logger.warning("Hotkeys de reroll indisponíveis (%s) — use os botões da interface", exc)
+
     # ── Pipeline B: scanner de palavras-usadas (independente, opcional) ──────────
     # Região do painel SOLVE persistida em arquivo próprio. Engine/captura próprios.
     # Se a região não for calibrada ou o OCR falhar, o scanner se autodesativa.

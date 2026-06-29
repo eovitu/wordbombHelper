@@ -60,6 +60,8 @@ body {
   color: var(--text);
 }
 .word.live { color: var(--accent); }
+.reroll { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; }
+.suggestion-count { color: var(--muted); font-size: 13px; min-width: 120px; text-align: center; }
 
 /* Controles */
 .controls { display: flex; gap: 8px; }

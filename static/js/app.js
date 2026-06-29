@@ -145,6 +145,30 @@ function exportAmbiguous() {
   window.location.href = '/api/ambiguous_words/export';
 }
 
+/* ---------- Reroll (navegação manual de sugestões) ---------- */
+async function rerollNext() {
+  try { applyReroll(await (await fetch('/api/reroll/next', { method: 'POST' })).json()); } catch {}
+}
+async function rerollPrev() {
+  try { applyReroll(await (await fetch('/api/reroll/prev', { method: 'POST' })).json()); } catch {}
+}
+function applyReroll(r) {
+  if (!r) return;
+  if (r.word) {
+    const w = $('word');
+    w.textContent = r.word.toUpperCase();
+    w.classList.add('live');
+  }
+  updateSuggestionCount(r.index, r.total);
+}
+function updateSuggestionCount(idx, tot) {
+  const el = $('suggestion-count');
+  const bar = $('reroll-bar');
+  if (!el || !bar) return;
+  if (tot > 0) { el.textContent = `Sugestão ${idx} / ${tot}`; bar.hidden = false; }
+  else { el.textContent = ''; bar.hidden = true; }
+}
+
 /* ---------- Calibração ---------- */
 async function calibrate(target) {
   try {
@@ -206,6 +230,9 @@ function applyRealtimeUpdate(s) {
     word.classList.remove('live');
     promptLine.textContent = watching ? 'aguardando sua vez' : '';
   }
+
+  // Contador de sugestões (Reroll). SSE usa sidx/stot; o poll usa suggestion_index/total.
+  updateSuggestionCount(s.sidx ?? s.suggestion_index ?? 0, s.stot ?? s.suggestion_total ?? 0);
 }
 
 /* ---------- Polling periódico — logs + calibração + fallback se SSE falhar ---------- */

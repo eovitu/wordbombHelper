@@ -58,6 +58,16 @@ def create_api_blueprint(deps):
         return Response(body, mimetype="text/plain",
                         headers={"Content-Disposition": "attachment; filename=ambiguous_ocr.txt"})
 
+    @bp.route("/api/reroll/next", methods=["POST"])
+    @optional_auth_required
+    def reroll_next():
+        return jsonify(word_service.reroll_next() or {"word": "", "index": 0, "total": 0})
+
+    @bp.route("/api/reroll/prev", methods=["POST"])
+    @optional_auth_required
+    def reroll_prev():
+        return jsonify(word_service.reroll_prev() or {"word": "", "index": 0, "total": 0})
+
     @bp.route("/api/reset", methods=["POST"])
     @optional_auth_required
     def reset_words():
@@ -131,6 +141,8 @@ def create_api_blueprint(deps):
                         "preview": screen_reader.preview_prompt or "",
                         "status": screen_reader.status,
                         "watching": screen_reader.is_watching,
+                        "sidx": screen_reader.suggestion_index,
+                        "stot": screen_reader.suggestion_total,
                     }
                     if cur != last:
                         last = dict(cur)
