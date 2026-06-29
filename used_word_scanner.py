@@ -153,6 +153,12 @@ class UsedWordScanner:
         self._stop = threading.Event()
         self._idle_warned = False
         self.learned_count = 0
+        # Sincronização para catch-up dirigido por evento (Pipeline A pede um scan na hora).
+        # Mantém as duas pipelines desacopladas: A só chama request_catch_up(); B faz o scan
+        # na PRÓPRIA thread (mss/engine não cruzam threads).
+        self._cv = threading.Condition()
+        self._catch_up_flag = False
+        self._scan_seq = 0
         # Log das palavras aprendidas (para exibir na tela). seq cresce sempre (mesmo após
         # reset) para o front usar high-water-mark e não re-renderizar entradas antigas.
         self._learned_log = []
@@ -170,6 +176,8 @@ class UsedWordScanner:
 
     def stop(self):
         self._stop.set()
+        with self._cv:
+            self._cv.notify_all()  # acorda o laço/quem espera catch-up
         if self._thread:
             self._thread.join(timeout=1.5)
         self.source.close()
@@ -186,39 +194,67 @@ class UsedWordScanner:
         with self._learned_lock:
             return list(self._learned_log[-count:])
 
+    def request_catch_up(self, timeout=0.18):
+        """Pipeline A chama no início do MEU turno: força um scan imediato e espera (limitado)
+        ele terminar, para a palavra recém-jogada pelo oponente já estar marcada antes da
+        sugestão. Retorna rápido (sem travar) se Pipeline B não estiver utilizável."""
+        if self._stop.is_set():
+            return
+        if self.is_active and not self.is_active():
+            return
+        if not self.source.region_ready():   # B não configurado → não espera, não congela
+            return
+        with self._cv:
+            target = self._scan_seq + 1
+            self._catch_up_flag = True
+            self._cv.notify_all()
+            self._cv.wait_for(lambda: self._scan_seq >= target or self._stop.is_set(),
+                              timeout=timeout)
+
+    def _wait_next(self, timeout):
+        """Dorme até o intervalo OU até um pedido de catch-up (o que vier primeiro)."""
+        with self._cv:
+            self._cv.wait_for(lambda: self._catch_up_flag or self._stop.is_set(), timeout=timeout)
+
+    def _scan_and_learn(self):
+        words = self.source.poll()
+        lang = self.lang_getter() if self.lang_getter else None
+        for raw in words:
+            key = self.word_manager.normalize_token(raw)
+            if not key or len(key) < 2 or key in self._seen:
+                continue
+            self._seen.add(key)  # marca como vista mesmo se não casar (evita reprocesso)
+            try:
+                if self.word_manager.mark_used_ocr(raw, lang):
+                    self.learned_count += 1
+                    with self._learned_lock:
+                        self._learned_seq += 1
+                        self._learned_log.append({"id": self._learned_seq, "word": key})
+                        if len(self._learned_log) > 50:
+                            self._learned_log.pop(0)
+            except Exception as exc:
+                logger.debug("Pipeline B: erro ao marcar '%s' (%s)", key, exc)
+        # Sinaliza conclusão deste scan (acorda quem pediu catch-up).
+        with self._cv:
+            self._scan_seq += 1
+            self._catch_up_flag = False
+            self._cv.notify_all()
+
     def _run(self):
         while not self._stop.is_set():
             try:
                 if self.is_active and not self.is_active():
-                    self._stop.wait(0.5)  # fora de partida: não captura nada
+                    self._wait_next(0.5)  # fora de partida: não captura nada
                     continue
                 if not self.source.available():
                     if not self._idle_warned:
                         logger.info("Pipeline B ocioso (engine ou região indisponível) — "
                                     "calibre o painel SOLVE para ativar.")
                         self._idle_warned = True
-                    self._stop.wait(1.0)
+                    self._wait_next(1.0)
                     continue
                 self._idle_warned = False
-
-                words = self.source.poll()
-                lang = self.lang_getter() if self.lang_getter else None
-                for raw in words:
-                    key = self.word_manager.normalize_token(raw)
-                    if not key or len(key) < 2 or key in self._seen:
-                        continue
-                    self._seen.add(key)  # marca como vista mesmo se não casar (evita reprocesso)
-                    try:
-                        if self.word_manager.mark_used_ocr(raw, lang):
-                            self.learned_count += 1
-                            with self._learned_lock:
-                                self._learned_seq += 1
-                                self._learned_log.append({"id": self._learned_seq, "word": key})
-                                if len(self._learned_log) > 50:
-                                    self._learned_log.pop(0)
-                            logger.debug("Pipeline B: '%s' marcada como usada", key)
-                    except Exception as exc:
-                        logger.debug("Pipeline B: erro ao marcar '%s' (%s)", key, exc)
+                self._scan_and_learn()
             except Exception as exc:
                 logger.error("Pipeline B: erro no laço (%s)", exc)
-            self._stop.wait(self.interval)
+            self._wait_next(self.interval)

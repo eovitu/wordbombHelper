@@ -72,6 +72,9 @@ class ScreenReader:
         # Calibração de uma 2ª região (painel SOLVE / Pipeline B). Não afeta o Pipeline A.
         self.on_solve_region_calibrated = None
         self._calib_target = "turn"
+        # Catch-up do Pipeline B: chamado ao DETECTAR o início do meu turno, antes de sugerir.
+        # Espera limitada (o callback decide o timeout). Mantém A e B desacoplados.
+        self.on_my_turn_started = None
 
         # Runtime state
         self.last_word_typed = ""
@@ -298,10 +301,6 @@ class ScreenReader:
         keyword_detected = any(kw.replace(" ", "").replace("-", "").replace("'", "") in joined_alpha
                                for kw in self.turn_keywords)
 
-        if tokens:
-            logger.debug("OCR tokens: %s | keyword=%s | candidato=%r conf=%.1f",
-                         tokens, keyword_detected, best_candidate, best_confidence)
-
         return best_candidate, best_confidence, keyword_detected
 
     # ── Captura + processamento ──────────────────────────────────────────────
@@ -412,19 +411,8 @@ class ScreenReader:
             validation_ok = candidate_conf >= self.prompt_conf_threshold or keyword_detected
             if not is_ghost and validation_ok:
                 prompt_text = candidate
-            else:
-                logger.debug("Prompt rejeitado: %r (conf=%.1f, keyword=%s, ghost=%s)",
-                             candidate, candidate_conf, keyword_detected, is_ghost)
 
         self._last_prompt_conf = candidate_conf if prompt_text else -1.0
-
-        logger.debug(
-            "OCR %.0fms | img=%dx%d | white=%d | keyword=%s | conf_streak=%d miss=%d "
-            "| my_turn=%s | candidato=%r conf=%.1f → prompt=%r",
-            ocr_ms, img_large.shape[1], img_large.shape[0],
-            white_count, keyword_detected, self._turn_confirm_streak, self._turn_miss_streak,
-            bool(is_my_turn), candidate, candidate_conf, prompt_text,
-        )
 
         payload = (candidate, prompt_text, bool(is_my_turn))
         self._last_capture_result = payload
@@ -502,6 +490,13 @@ class ScreenReader:
                     if is_my_turn != self._last_is_my_turn:
                         self._log("Turno detectado (SUA VEZ)" if is_my_turn else "Turno encerrado")
                         self._last_is_my_turn = is_my_turn
+                        # Início do meu turno: pede catch-up do Pipeline B (espera limitada)
+                        # para a última palavra do oponente já estar marcada antes de sugerir.
+                        if is_my_turn and self.on_my_turn_started:
+                            try:
+                                self.on_my_turn_started()
+                            except Exception as exc:
+                                logger.debug("catch-up Pipeline B ignorado: %s", exc)
 
                     if not is_my_turn:
                         if self.last_suggested_prompt or self.suggested_word:

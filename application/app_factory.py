@@ -89,10 +89,12 @@ def create_app():
     used_word_scanner = UsedWordScanner(
         word_manager, _solve_source,
         lang_getter=lambda: autoplay_state.snapshot_config().get("lang"),
-        interval=0.75,
+        interval=0.45,  # polling de fundo (aprende continuamente durante a partida)
         is_active=lambda: screen_reader.is_watching,  # só varre durante a partida
     )
     screen_reader.on_solve_region_calibrated = solve_region_store.set_region
+    # Catch-up dirigido por evento: ao iniciar meu turno, A pede um scan e espera ≤180ms.
+    screen_reader.on_my_turn_started = lambda: used_word_scanner.request_catch_up(0.18)
     used_word_scanner.start()  # thread própria; idle até calibrar + começar a observar
 
     preset_repository = FilePresetRepository(os.path.join(os.path.dirname(__file__), "..", "presets.json"))
