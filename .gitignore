@@ -1,23 +1,44 @@
-# Python cache
+# ── Python ───────────────────────────────────────────────
 __pycache__/
-*.pyc
-tmp/
-debug_screenshots/
+*.py[cod]
+*.egg-info/
+build/
+dist/
 
-# OCR debug artifacts
-debug_screenshots/*.png
-debug_screenshots/*.jpg
-debug_screenshots/*.jpeg
-debug_screenshots/*.webp
-debug_screenshots/*.bmp
+# ── Ambiente virtual ─────────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
 
-# Logs
-logs/
-
-# Local editor settings
+# ── IDEs / editores ──────────────────────────────────────
+.idea/
 .vscode/
 
+# ── Sistema operacional ──────────────────────────────────
+.DS_Store
+Thumbs.db
 
-solve_region.json
-missing_prompts.json
-ambiguous_ocr.json
+# ── Logs ─────────────────────────────────────────────────
+logs/
+*.log
+*.log.[0-9]
+
+# ── Artefatos de debug do OCR ────────────────────────────
+debug_screenshots/
+
+# ── Estado de runtime / persistência gerada ──────────────
+calibration_region.json      # região de calibração (Pipeline A)
+solve_region.json            # região do painel SOLVE (Pipeline B)
+presets.json                 # presets do usuário
+missing_prompts.json         # manutenção: prompts sem palavra
+ambiguous_ocr.json           # manutenção: leituras OCR ambíguas
+
+# ── Exports gerados ──────────────────────────────────────
+missing_prompts.txt
+ambiguous_ocr.txt
+
+# ── Temporários ──────────────────────────────────────────
+tmp/
+*.tmp
+.artifacts/

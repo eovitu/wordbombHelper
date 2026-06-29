@@ -77,24 +77,16 @@ def create_app():
     # Persiste a região calibrada (inclusive via listener de mouse, que antes não salvava).
     screen_reader.on_region_calibrated = region_store.set_region
 
-    # ── Reroll: hotkeys globais R (próxima) / Shift+R (anterior) ─────────────────
-    # Reusa o hook global do pacote `keyboard` (já usado pelo Typer) — não cria thread nova.
-    # Apenas navega a sessão de sugestões (índice±1); não marca nada, não toca OCR/Pipeline B.
-    # Nota: é global, então digitar 'r' avança a sessão — inofensivo (reseta no próximo prompt).
+    # ── Reroll: hotkeys globais Shift+R (próxima) / Ctrl+R (anterior) ────────────
+    # Combos (não a tecla 'r' sozinha) para não disparar enquanto você digita palavras.
+    # suppress=True: o combo NÃO vaza para o jogo/navegador — evita digitar 'R' no campo e
+    # evita o Ctrl+R recarregar a aba do jogo. Reusa o hook global do `keyboard` (já usado
+    # pelo Typer) — não cria thread. Só navega a sessão; não marca nada, não toca OCR/Pipeline B.
     try:
         import keyboard
-
-        def _on_r_key(_event):
-            try:
-                if keyboard.is_pressed("shift"):
-                    word_service.reroll_prev()
-                else:
-                    word_service.reroll_next()
-            except Exception:
-                pass
-
-        keyboard.on_press_key("r", _on_r_key)
-        logger.info("Reroll hotkeys ativos (R = próxima, Shift+R = anterior)")
+        keyboard.add_hotkey("shift+r", word_service.reroll_next, suppress=True)
+        keyboard.add_hotkey("ctrl+r", word_service.reroll_prev, suppress=True)
+        logger.info("Reroll hotkeys ativos (Shift+R = próxima, Ctrl+R = anterior)")
     except Exception as exc:
         logger.warning("Hotkeys de reroll indisponíveis (%s) — use os botões da interface", exc)
 

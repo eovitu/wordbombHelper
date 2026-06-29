@@ -50,3 +50,9 @@ class MissingPromptsStore:
         with self._lock:
             items = sorted(self._counts.items(), key=lambda kv: (-kv[1], kv[0]))
             return [{"prompt": k, "count": v} for k, v in items[:limit]]
+
+    def ordered_prompts(self):
+        """Todos os prompts em MAIÚSCULAS, ordenados por contagem desc (export TXT)."""
+        with self._lock:
+            items = sorted(self._counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            return [k.upper() for k, _ in items]

@@ -8,29 +8,9 @@ from shared.logging_config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-_context = create_app()
-app = _context.app
-wm = _context.word_manager
-typer = _context.typer
-region_store = _context.region_store
-autoplay_state = _context.autoplay_state
-screen_reader = _context.screen_reader
-word_service = _context.word_service
-preset_repository = _context.preset_repository
-preset_service = _context.preset_service
-optional_auth_required = _context.optional_auth_required
-autoplay_config = autoplay_state.config
-autoplay_logs = autoplay_state.logs
-autoplay_config_lock = autoplay_state.config_lock
-autoplay_logs_lock = autoplay_state.logs_lock
-
-
-def load_presets():
-    return preset_repository.load()
-
-
-def save_presets(presets):
-    return preset_repository.save(presets)
+# `app` é exposto no nível do módulo para `flask run` (main:app). Toda a montagem
+# (DI, threads do scanner, hotkeys) acontece dentro de create_app().
+app = create_app().app
 
 
 if __name__ == "__main__":
