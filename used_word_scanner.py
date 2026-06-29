@@ -124,7 +124,7 @@ class OcrSolvePanelSource(UsedWordSource):
         except Exception as exc:
             logger.debug("Pipeline B: falha de leitura (%s)", exc)
             return []
-        return [t for (t, _conf, _h) in tokens if t]
+        return [tok[0] for tok in tokens if tok[0]]
 
     def close(self):
         try:

@@ -236,6 +236,7 @@ class ScreenReader:
         texts = data.get("text", [])
         confs = data.get("conf", [])
         heights = data.get("height", [])
+        tops = data.get("top", [])
         out = []
         for i, txt in enumerate(texts):
             if not (txt or "").strip():
@@ -248,21 +249,29 @@ class ScreenReader:
                 height = int(heights[i])
             except (TypeError, ValueError, IndexError):
                 height = 0
-            out.append((txt, conf, height))
+            try:
+                top = int(tops[i])
+            except (TypeError, ValueError, IndexError):
+                top = 0
+            out.append((txt, conf, height, top))
         return out
 
     def _read_prompt_and_turn(self, gray_img):
         """Uma leitura de OCR → (sílaba, confiança, keyword_turno_detectada).
 
-        Detecta sílaba (maior token na tela, excluindo UI) e se "SUA VEZ"/"TURN"
+        Detecta a sílaba (token mais ALTO na região, excluindo UI) e se "SUA VEZ"/"TURN"
         está presente, numa única passada sobre os tokens do Tesseract.
+
+        Por que o mais alto (e não o maior): o prompt fica SEMPRE acima dos tiles da palavra
+        sendo digitada. Pegar o token de menor `top` ignora esses tiles e mata a alucinação
+        em que fragmentos da palavra digitada viravam "prompts" (imt, mare, ey, yac, ...).
         """
         raw_tokens = self._get_ocr_tokens(gray_img)
 
         tokens = []
-        best_candidate, best_confidence, best_height = "", -1.0, -1
+        best_candidate, best_confidence, best_height, best_top = "", -1.0, -1, None
 
-        for txt, conf_val, height in raw_tokens:
+        for txt, conf_val, height, top in raw_tokens:
             clean = self._clean_ocr_token(txt)
             if not clean:
                 continue
@@ -277,9 +286,12 @@ class ScreenReader:
             if height < self.min_prompt_height:
                 continue
 
-            # Sílaba = maior token na tela (altura de fonte), confiança como desempate.
-            if height > best_height or (height == best_height and conf_val > best_confidence):
-                best_candidate, best_confidence, best_height = clean.lower(), conf_val, height
+            # Sílaba = token mais ALTO na região (menor top). Empate: maior altura, depois conf.
+            # Isso prefere o prompt (no topo) aos tiles da palavra digitada (abaixo).
+            if (best_top is None or top < best_top
+                    or (top == best_top and (height > best_height
+                        or (height == best_height and conf_val > best_confidence)))):
+                best_candidate, best_confidence, best_height, best_top = clean.lower(), conf_val, height, top
 
         # joined sem hífen/apóstrofe para não quebrar keyword detection se OCR ler "SUA-VEZ".
         joined_alpha = "".join(ch for ch in "".join(tokens) if ch.isalpha())

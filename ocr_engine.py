@@ -127,7 +127,10 @@ class WarmTesseract:
             lib.TessBaseAPISetVariable(self._api, b"tessedit_char_whitelist", whitelist.encode("ascii"))
 
     def read_tokens(self, gray_img):
-        """OCR de uma imagem grayscale (numpy uint8, 1 canal) → [(text, conf, height)]."""
+        """OCR de uma imagem grayscale (numpy uint8, 1 canal) → [(text, conf, height, top)].
+
+        `top` = coordenada y do topo do token (px), usada para preferir o token mais alto
+        (o prompt fica sempre acima dos tiles da palavra digitada)."""
         import numpy as np
         c = ctypes_mod
         if gray_img.ndim != 2:
@@ -157,10 +160,12 @@ class WarmTesseract:
                         conf = float(self._lib.TessResultIteratorConfidence(ri, _RIL_WORD))
                         if self._lib.TessPageIteratorBoundingBox(
                                 pi, _RIL_WORD, c.byref(x1), c.byref(y1), c.byref(x2), c.byref(y2)):
+                            top = y1.value
                             height = y2.value - y1.value
                         else:
+                            top = 0
                             height = 0
-                        tokens.append((text, conf, height))
+                        tokens.append((text, conf, height, top))
                     if not self._lib.TessResultIteratorNext(ri, _RIL_WORD):
                         break
             finally:
