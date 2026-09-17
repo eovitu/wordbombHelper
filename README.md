@@ -173,9 +173,11 @@ Recover acompanha quantas vezes cada letra ainda precisa aparecer nas suas palav
 - segundo ciclo: 4;
 - terceiro ciclo e seguintes: 5.
 
-O campo de exclusão permite ignorar outras letras. A tela mostra modo, ciclo, alvo e letras restantes.
+O campo de exclusão permite ignorar outras letras. A tela mostra modo, ciclo, alvo e letras restantes. A tela compacta também mantém uma faixa com somente as letras que ainda faltam; quando uma letra precisa aparecer mais de uma vez, ela mostra `×2`, `×3` e assim por diante.
 
 Somente palavras que você efetivamente jogou avançam o Recover. Palavras dos adversários vistas no SOLVE ficam indisponíveis, mas não contam como progresso pessoal.
+
+Para acompanhar a aceleração da bomba, o tamanho das sugestões muda por etapas durante a partida: até 24 palavras confirmadas, todos os tamanhos são considerados; da 25ª em diante, o Recover prefere até 40 letras; da 40ª, até 35; da 50ª, até 25; da 70ª, até 20; e da 100ª, até 15. Depois de 150 palavras, entra no modo rápido estratégico, priorizando a melhor relação entre letras pendentes cobertas e tamanho da palavra. Esses valores são preferências: se o prompt não tiver uma solução dentro da faixa, o helper continua oferecendo a palavra útil mais curta disponível.
 
 ## Dicionário pessoal
 
@@ -272,7 +274,7 @@ O reset automático ainda não está ativo. A ausência de `SUA VEZ` também aco
 
 ## Tela compacta e janela flutuante
 
-- **Tela compacta:** reduz a página aos elementos necessários durante o jogo e guarda a preferência no navegador.
+- **Tela compacta:** reduz a página aos elementos necessários durante o jogo, mostra as letras que ainda faltam no Recover e guarda a preferência no navegador.
 - **Janela flutuante:** abre uma janela pequena e redimensionável com a visão compacta.
 
 Posicione a janela fora da área calibrada. Caso o navegador bloqueie a abertura, permita popups para `127.0.0.1`.

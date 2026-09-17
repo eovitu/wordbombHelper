@@ -23,6 +23,7 @@ class WordManager:
         self.sublists = {}
         self.used_words = set()
         self.rejected_words = set()
+        self.confirmed_word_count = 0
         self.recover_mode = 'casual'
         self.recover_cycle = 1
         self.recover_target = 1
@@ -133,8 +134,26 @@ class WordManager:
                 'mode': self.recover_mode,
                 'cycle': self.recover_cycle,
                 'target': self.recover_target,
+                'confirmed_words': self.confirmed_word_count,
+                'preferred_max_length': self._recover_preferred_max_length(),
+                'fast_strategic': self.confirmed_word_count >= 150,
                 'remaining': dict(self.letter_targets),
             }
+
+    def _recover_preferred_max_length(self):
+        """Soft length target that follows the match's increasing speed."""
+        played = self.confirmed_word_count
+        if played < 25:
+            return None
+        if played < 40:
+            return 40
+        if played < 50:
+            return 35
+        if played < 70:
+            return 25
+        if played < 100:
+            return 20
+        return 15
 
     def _load_language(self, lang):
         """Loads wordlists for a specific language from the specified directory.
@@ -443,7 +462,34 @@ class WordManager:
             if not scored_candidates:
                 return random.choice(candidates)
 
-            # Find the maximum score
+            preferred_max = self._recover_preferred_max_length()
+            if preferred_max is not None:
+                helpful = [(score, word) for score, word in scored_candidates if score > 0]
+                pool = helpful or scored_candidates
+                if self.confirmed_word_count >= 150 and helpful:
+                    best_efficiency = max(score / len(word) for score, word in helpful)
+                    efficient = [
+                        (score, word) for score, word in helpful
+                        if score / len(word) == best_efficiency
+                    ]
+                    shortest = min(len(word) for _, word in efficient)
+                    return random.choice([
+                        word for _, word in efficient if len(word) == shortest
+                    ])
+
+                preferred = [(score, word) for score, word in pool if len(word) <= preferred_max]
+                if preferred:
+                    pool = preferred
+                else:
+                    shortest_length = min(len(word) for _, word in pool)
+                    pool = [(score, word) for score, word in pool if len(word) == shortest_length]
+
+                best_score = max(score for score, _ in pool)
+                best_words = [word for score, word in pool if score == best_score]
+                shortest_best = min(len(word) for word in best_words)
+                return random.choice([word for word in best_words if len(word) == shortest_best])
+
+            # No começo da partida, maximize a cobertura como antes.
             best_score = max(score for score, w in scored_candidates)
 
             if best_score > 0:
@@ -525,6 +571,7 @@ class WordManager:
         if w_lower in self.used_words:
             return
         self.used_words.add(w_lower)
+        self.confirmed_word_count += 1
 
         # Clean accents to proper check against 'a'-'z' targets
         w_clean = ''.join(c for c in unicodedata.normalize('NFD', w_lower) if unicodedata.category(c) != 'Mn')
@@ -723,6 +770,7 @@ class WordManager:
         with self._lock:
             self.used_words.clear()
             self.rejected_words.clear()
+            self.confirmed_word_count = 0
             self.wordlists.clear()
             self.sublists.clear()
             self._match_index.clear()

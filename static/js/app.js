@@ -366,8 +366,15 @@ function updateOcrState(state, prompt) {
 
 function updateRecoverProgress(state) {
   const el = $('recover-progress');
+  const tracker = $('recover-tracker');
+  const letters = $('recover-letters');
+  const meta = $('recover-tracker-meta');
   const progress = state.recover_progress;
-  if (!progress || typeof progress !== 'object') { el.hidden = true; return; }
+  if (!progress || typeof progress !== 'object') {
+    el.hidden = true;
+    tracker.hidden = true;
+    return;
+  }
   const parts = [];
   if (progress.mode) parts.push(`Modo: ${progress.mode}`);
   if (progress.cycle != null) parts.push(`Ciclo: ${progress.cycle}`);
@@ -381,6 +388,39 @@ function updateRecoverProgress(state) {
   if (!parts.length) { el.hidden = true; return; }
   el.textContent = parts.join(' · ');
   el.hidden = false;
+
+  const remaining = progress.remaining && typeof progress.remaining === 'object'
+    ? Object.entries(progress.remaining).filter(([, amount]) => Number(amount) > 0)
+    : [];
+  letters.replaceChildren();
+  for (const [letter, amountValue] of remaining) {
+    const amount = Number(amountValue);
+    const chip = document.createElement('span');
+    chip.className = 'recover-letter';
+    chip.setAttribute('role', 'listitem');
+    chip.setAttribute('aria-label', `${letter.toUpperCase()}, falta ${amount} vez${amount === 1 ? '' : 'es'}`);
+    chip.textContent = letter.toUpperCase();
+    if (amount > 1) {
+      const count = document.createElement('small');
+      count.textContent = `×${amount}`;
+      chip.appendChild(count);
+    }
+    letters.appendChild(chip);
+  }
+  const lengthHint = progress.fast_strategic
+    ? ' · rápido estratégico'
+    : progress.preferred_max_length == null
+      ? ''
+      : ` · prefere até ${progress.preferred_max_length} letras`;
+  meta.textContent = `Ciclo ${progress.cycle ?? 1} · ${progress.target ?? 1}× cada${lengthHint}`;
+  tracker.classList.toggle('is-complete', remaining.length === 0);
+  if (!remaining.length) {
+    const complete = document.createElement('span');
+    complete.className = 'recover-complete';
+    complete.textContent = 'Ciclo completo';
+    letters.appendChild(complete);
+  }
+  tracker.hidden = false;
 }
 
 function updateResetNotice(state) {
