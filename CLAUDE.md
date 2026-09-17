@@ -51,16 +51,22 @@ python main.py                            # inicia o Flask em http://127.0.0.1:5
 
 - Tesseract no Windows é procurado em `C:\Program Files\Tesseract-OCR\tesseract.exe`; senão usa o PATH. Lógica em [`screen_reader.py`](screen_reader.py) (topo do arquivo).
 - Variável de ambiente opcional `WORDBOMB_API_TOKEN`: se definida, exige header `X-API-Token` nas rotas que mutam estado. Vazia (padrão) = sem auth.
-- Tecla **Insert** (global) aborta a digitação em andamento; `pyautogui.FAILSAFE` (mouse no canto superior-esquerdo) também aborta.
+- Hotkeys globais de reroll: **Insert** = alternativa mais curta, **Ctrl+R** = anterior. A digitação em andamento (auto-type) é abortada por `pyautogui.FAILSAFE` (mouse no canto superior-esquerdo) — não há mais hotkey de abort.
 
 ## 4. Como testar
 
-**Não há suíte de testes automatizada.** A verificação é manual + scripts de debug:
+Existe uma suíte `unittest` para regras de palavras, ciclo de sugestão, Recover, dicionário pessoal, treino, perfis, diagnóstico OCR e contratos HTTP:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+A integração com a tela do jogo e o teclado continua exigindo verificação manual:
 - [`debug_typer.py`](debug_typer.py): simula a digitação com mocks de teclado/tempo para inspecionar a lógica de erros/typos sem mexer no teclado real. Rode com `python debug_typer.py`.
 - [`scratch/debug_tzc.py`](scratch/debug_tzc.py): debug de processamento.
 - Verificação de OCR / turn-detection é manual (ver `.artifacts/.../implementation_plan.artifact.md`).
 
-Ao adicionar testes de verdade, ver [`.claude/SKILLS/testing.md`](.claude/SKILLS/testing.md).
+Para ampliar a suíte, ver [`.claude/SKILLS/testing.md`](.claude/SKILLS/testing.md), conferindo instruções antigas contra o código atual.
 
 ## 5. Arquitetura (resumo)
 
