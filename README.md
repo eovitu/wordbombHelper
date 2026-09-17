@@ -114,7 +114,7 @@ Sem essa região, a sugestão principal continua funcionando normalmente.
 1. Selecione idioma, estratégia e filtros.
 2. Clique em **Iniciar**.
 3. Quando o programa reconhecer seu turno, digite no jogo a palavra sugerida.
-4. Quando o prompt desaparecer, a palavra que estava exibida será confirmada como usada.
+4. Quando o painel SOLVE mostrar uma palavra verde compatível com a sílaba, essa palavra será confirmada como usada. Se a bomba explodir sem uma palavra verde, nada é consumido.
 
 Durante o turno:
 
@@ -175,7 +175,7 @@ Recover acompanha quantas vezes cada letra ainda precisa aparecer nas suas palav
 
 O campo de exclusão permite ignorar outras letras. A tela mostra modo, ciclo, alvo e letras restantes. A tela compacta também mantém uma faixa com somente as letras que ainda faltam; quando uma letra precisa aparecer mais de uma vez, ela mostra `×2`, `×3` e assim por diante.
 
-Somente palavras que você efetivamente jogou avançam o Recover. Palavras dos adversários vistas no SOLVE ficam indisponíveis, mas não contam como progresso pessoal.
+Somente palavras confirmadas como suas pelo painel SOLVE avançam o Recover. Uma palavra verde nova durante seu turno confirma a palavra que o jogo aceitou, mesmo quando você escreveu outra no lugar da sugestão. Uma tentativa vermelha não altera o Recover; se a bomba explodir sem palavra verde, a sugestão continua disponível. Palavras dos adversários vistas no SOLVE ficam indisponíveis, mas não contam como progresso pessoal. Para essa confirmação automática, calibre o painel SOLVE; se a leitura verde falhar, o helper mantém o progresso inalterado em vez de presumir acerto.
 
 Para acompanhar a aceleração da bomba, o tamanho das sugestões muda por etapas durante a partida: até 24 palavras confirmadas, todos os tamanhos são considerados; da 25ª em diante, o Recover prefere até 40 letras; da 40ª, até 35; da 50ª, até 25; da 70ª, até 20; e da 100ª, até 15. Depois de 150 palavras, entra no modo rápido estratégico, priorizando a melhor relação entre letras pendentes cobertas e tamanho da palavra. Esses valores são preferências: se o prompt não tiver uma solução dentro da faixa, o helper continua oferecendo a palavra útil mais curta disponível.
 

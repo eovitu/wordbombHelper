@@ -31,6 +31,16 @@ class RecoverCycleTests(unittest.TestCase):
         self.assertIn("casa", manager.used_words)
         self.assertEqual(before, manager.recover_progress())
 
+    def test_solve_marks_own_word_before_turn_ends_without_losing_q(self):
+        manager = WordManager()
+        manager.mark_unavailable("quadro")
+        self.assertEqual(1, manager.recover_progress()["remaining"]["q"])
+        manager.confirm_own_word("quadro")
+        self.assertEqual(0, manager.recover_progress()["remaining"]["q"])
+        self.assertEqual(1, manager.confirmed_word_count)
+        manager.confirm_own_word("quadro")
+        self.assertEqual(1, manager.confirmed_word_count)
+
     def test_length_preference_follows_match_speed_bands(self):
         manager = WordManager()
 

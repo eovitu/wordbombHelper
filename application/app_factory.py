@@ -139,10 +139,12 @@ def create_app():
         ambiguous_store=ambiguous_store,
         personal_dictionary=personal_dictionary,
         match_summary=match_summary,
+        on_accepted_word=word_service.observe_accepted_word,
     )
     screen_reader.on_solve_region_calibrated = solve_region_store.set_region
     # Catch-up dirigido por evento: ao iniciar meu turno, A pede um scan e espera ≤180ms.
     screen_reader.on_my_turn_started = lambda: used_word_scanner.request_catch_up(0.18)
+    screen_reader.on_my_turn_ended = lambda: used_word_scanner.request_catch_up(0.18)
     used_word_scanner.start()  # thread própria; idle até calibrar + começar a observar
 
     preset_repository = FilePresetRepository(os.path.join(os.path.dirname(__file__), "..", "presets.json"))

@@ -145,7 +145,8 @@ class UsedWordScanner:
     """Laço de fundo que aprende palavras já jogadas e as marca no WordManager."""
 
     def __init__(self, word_manager, source, lang_getter, interval=0.75, is_active=None,
-                 ambiguous_store=None, personal_dictionary=None, match_summary=None):
+                 ambiguous_store=None, personal_dictionary=None, match_summary=None,
+                 on_accepted_word=None):
         self.word_manager = word_manager
         self.source = source
         self.lang_getter = lang_getter          # callable -> idioma atual (str)
@@ -154,6 +155,7 @@ class UsedWordScanner:
         self.ambiguous_store = ambiguous_store  # registro de leituras ambíguas (manutenção)
         self.personal_dictionary = personal_dictionary
         self.match_summary = match_summary
+        self.on_accepted_word = on_accepted_word
         self._seen = set()                      # chaves já marcadas (dedup)
         self._unknown_counts = {}
         self._thread = None
@@ -245,16 +247,18 @@ class UsedWordScanner:
                 logger.debug("Pipeline B: raw=%r key=%r status=%s canonical=%r",
                              raw, key, status, canonical)
                 if status == "marked":
+                    is_own_word = bool(self.on_accepted_word and self.on_accepted_word(canonical))
                     self._seen.add(key)
                     self._unknown_counts.pop(key, None)
-                    self.learned_count += 1
-                    if self.match_summary:
-                        self.match_summary.record_learned_word(canonical, "solve_panel")
-                    with self._learned_lock:
-                        self._learned_seq += 1
-                        self._learned_log.append({"id": self._learned_seq, "word": canonical})
-                        if len(self._learned_log) > 50:
-                            self._learned_log.pop(0)
+                    if not is_own_word:
+                        self.learned_count += 1
+                        if self.match_summary:
+                            self.match_summary.record_learned_word(canonical, "solve_panel")
+                        with self._learned_lock:
+                            self._learned_seq += 1
+                            self._learned_log.append({"id": self._learned_seq, "word": canonical})
+                            if len(self._learned_log) > 50:
+                                self._learned_log.pop(0)
                 elif status == "ambiguous" and self.ambiguous_store:
                     self._seen.add(key)
                     # Conservador: não marcamos. Registramos p/ o usuário revisar depois.
@@ -272,16 +276,18 @@ class UsedWordScanner:
                             continue
                         self.word_manager.refresh_language(lang)
                         self.word_manager.mark_unavailable(canonical)
+                        is_own_word = bool(self.on_accepted_word and self.on_accepted_word(canonical))
                         self._seen.add(key)
                         self._unknown_counts.pop(key, None)
-                        self.learned_count += 1
-                        if self.match_summary:
-                            self.match_summary.record_learned_word(canonical, "solve_panel_new")
-                        with self._learned_lock:
-                            self._learned_seq += 1
-                            self._learned_log.append({"id": self._learned_seq, "word": canonical})
-                            if len(self._learned_log) > 50:
-                                self._learned_log.pop(0)
+                        if not is_own_word:
+                            self.learned_count += 1
+                            if self.match_summary:
+                                self.match_summary.record_learned_word(canonical, "solve_panel_new")
+                            with self._learned_lock:
+                                self._learned_seq += 1
+                                self._learned_log.append({"id": self._learned_seq, "word": canonical})
+                                if len(self._learned_log) > 50:
+                                    self._learned_log.pop(0)
                         logger.info("Pipeline B: palavra adicionada no topo para revisão: %s", canonical)
             except Exception as exc:
                 logger.debug("Pipeline B: erro ao resolver '%s' (%s)", key, exc)

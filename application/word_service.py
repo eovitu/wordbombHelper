@@ -64,6 +64,7 @@ class WordService:
         # Sessão de sugestões do prompt atual (feature Reroll). Recriada a cada novo prompt.
         self._session = None
         self._session_lock = threading.Lock()
+        self._accepted_word = None
 
     def on_prompt_found(self, prompt_text):
         """Callback chamado pelo ScreenReader quando a sílaba é detectada.
@@ -72,10 +73,24 @@ class WordService:
             self.finish_turn()
             return False
 
+        self.action_notice = ""
+
         with self._session_lock:
             previous_prompt = self._session.prompt if self._session else None
         if previous_prompt == prompt_text:
-            self.reject_current()
+            # Uma tentativa vermelha mantém o prompt: tente a próxima sugestão
+            # sem apagar a anterior do dicionário nem reiniciar a sessão.
+            with self._session_lock:
+                if self._session.index >= self._session.total - 1:
+                    return False
+            result = self.reroll_next()
+            if not result:
+                return False
+            if self.autoplay_state.snapshot_config().get("auto_type", False):
+                self.typer.type_word(result["word"], auto_tab=False)
+                self.screen_reader.last_word_typed = result["word"]
+                self.typer.done_event.wait(timeout=3)
+            return True
         elif previous_prompt:
             self.finish_turn()
 
@@ -129,6 +144,7 @@ class WordService:
         """Define a sessão atual e reflete a palavra/posição no ScreenReader (lido pela UI)."""
         with self._session_lock:
             self._session = session
+            self._accepted_word = None
             self.screen_reader.suggested_word = session.current() if session else ""
             self.screen_reader.suggestion_index = session.position if session else 0
             self.screen_reader.suggestion_total = session.total if session else 0
@@ -161,16 +177,39 @@ class WordService:
             return {"word": word, "index": self._session.position,
                     "total": self._session.total}
 
-    def finish_turn(self):
-        """Confirm the displayed suggestion once the turn has ended."""
+    def observe_accepted_word(self, word):
+        """Record a new green SOLVE word only if it belongs to this prompt."""
+        normalized = self.word_manager.normalize_token(word)
         with self._session_lock:
             session = self._session
+            prompt = self.word_manager.normalize_token(session.prompt) if session else ""
+            if session and prompt and prompt in normalized and self._accepted_word is None:
+                self._accepted_word = word
+                return True
+        return False
+
+    def finish_turn(self):
+        """Only a green SOLVE word confirms this turn; disappearance may be an explosion."""
+        with self._session_lock:
+            session = self._session
+            accepted = self._accepted_word
+            # Feche a janela de atribuição atomicamente: um scan atrasado não
+            # pode anexar a palavra do próximo jogador ao turno encerrado.
+            self._session = None
+            self._accepted_word = None
+            self.screen_reader.suggested_word = ""
+            self.screen_reader.suggestion_index = 0
+            self.screen_reader.suggestion_total = 0
         if session:
-            self.word_manager.mark_used(session.current())
-            if self.match_summary:
+            if accepted:
+                self.word_manager.confirm_own_word(accepted)
+                self.autoplay_state.add_log(f"Palavra confirmada no SOLVE: '{accepted}'")
+            else:
+                self.action_notice = "Turno sem palavra verde confirmada; Recover preservado."
+                self.autoplay_state.add_log("Turno sem confirmação no SOLVE; sugestão preservada.")
+            if accepted and self.match_summary:
                 self.match_summary.record_confirmed_word(
-                    session.prompt, session.current(), "turn_end")
-            self._set_session(None)
+                    session.prompt, accepted, "solve_panel")
 
     def reject_current(self):
         """Exclude the displayed word from this match without advancing Recover."""

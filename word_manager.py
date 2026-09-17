@@ -22,6 +22,7 @@ class WordManager:
         self.wordlists = {}
         self.sublists = {}
         self.used_words = set()
+        self._recover_counted_words = set()
         self.rejected_words = set()
         self.confirmed_word_count = 0
         self.recover_mode = 'casual'
@@ -514,6 +515,13 @@ class WordManager:
             with self._lock:
                 self._mark_used_locked(word)
 
+    def confirm_own_word(self, word):
+        """Count an accepted own word even when SOLVE already marked it unavailable."""
+        if word:
+            with self._lock:
+                self.used_words.add(word.lower())
+                self._count_recover_locked(word)
+
     def reject_word(self, word):
         if word:
             with self._lock:
@@ -571,6 +579,13 @@ class WordManager:
         if w_lower in self.used_words:
             return
         self.used_words.add(w_lower)
+        self._count_recover_locked(word)
+
+    def _count_recover_locked(self, word):
+        w_lower = word.lower()
+        if w_lower in self._recover_counted_words:
+            return
+        self._recover_counted_words.add(w_lower)
         self.confirmed_word_count += 1
 
         # Clean accents to proper check against 'a'-'z' targets
@@ -769,6 +784,7 @@ class WordManager:
         """Resets used words history and clears memory cache of wordlists to force a disk reload."""
         with self._lock:
             self.used_words.clear()
+            self._recover_counted_words.clear()
             self.rejected_words.clear()
             self.confirmed_word_count = 0
             self.wordlists.clear()

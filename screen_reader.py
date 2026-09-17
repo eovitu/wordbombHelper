@@ -79,6 +79,7 @@ class ScreenReader:
         # Catch-up do Pipeline B: chamado ao DETECTAR o início do meu turno, antes de sugerir.
         # Espera limitada (o callback decide o timeout). Mantém A e B desacoplados.
         self.on_my_turn_started = None
+        self.on_my_turn_ended = None
 
         # Runtime state
         self.last_word_typed = ""
@@ -778,7 +779,7 @@ class ScreenReader:
             self._last_frame_hash = None
             _, new_prompt, still_my_turn = self._capture_and_ocr(sct)
             if not still_my_turn:
-                self._log("Palavra aceita! Aguardando próximo turno...")
+                self._log("Turno encerrado; aguardando confirmação pelo painel SOLVE...")
                 break
             if not new_prompt or new_prompt != prompt_text:
                 self._log("Prompt mudou/sumiu — re-escaneando...")
@@ -831,6 +832,11 @@ class ScreenReader:
 
                     if not is_my_turn:
                         if self.last_suggested_prompt or self.suggested_word:
+                            if self.on_my_turn_ended:
+                                try:
+                                    self.on_my_turn_ended()
+                                except Exception as exc:
+                                    logger.debug("scan final do SOLVE ignorado: %s", exc)
                             self._clear_prompt_lock()
                         time.sleep(0.08)  # polling relaxado fora do turno
                         continue
