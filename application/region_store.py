@@ -1,8 +1,11 @@
 import threading
 import json
+import logging
 import os
 
 from shared.parsing import normalize_capture_region
+
+logger = logging.getLogger(__name__)
 
 
 class RegionStore:
@@ -37,9 +40,10 @@ class RegionStore:
             try:
                 with open(self._store_file, "w", encoding="utf-8") as fh:
                     json.dump(self._ll_grid_region, fh)
-            except Exception:
-                # best-effort persistence; don't raise to caller
-                pass
+            except Exception as exc:
+                # best-effort persistence; don't raise to caller, mas deixa rastro
+                logger.debug("RegionStore: falha ao persistir região em %s (%s)",
+                             self._store_file, exc)
 
     def _load_from_disk(self):
         if not os.path.exists(self._store_file):
@@ -49,8 +53,10 @@ class RegionStore:
                 data = json.load(fh)
             normalized = normalize_capture_region(data)
             self._ll_grid_region = normalized if normalized else None
-        except Exception:
-            # ignore parse/load errors
+        except Exception as exc:
+            # ignore parse/load errors, mas registra para depuração
+            logger.debug("RegionStore: falha ao carregar região de %s (%s)",
+                         self._store_file, exc)
             self._ll_grid_region = None
 
     def clear_persistence(self):
@@ -59,5 +65,5 @@ class RegionStore:
             try:
                 if os.path.exists(self._store_file):
                     os.remove(self._store_file)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("RegionStore: falha ao remover %s (%s)", self._store_file, exc)

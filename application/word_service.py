@@ -11,12 +11,13 @@ logger = logging.getLogger(__name__)
 class SuggestionSession:
     """Lista de sugestões do prompt atual, calculada UMA vez. A navegação (Reroll) só move
     um índice — não refaz busca, não marca nada. Índice 0 = escolha do solver."""
-    __slots__ = ("prompt", "candidates", "index")
+    __slots__ = ("prompt", "candidates", "index", "short_seen")
 
     def __init__(self, prompt, candidates):
         self.prompt = prompt
         self.candidates = candidates
         self.index = 0
+        self.short_seen = {0}
 
     def current(self):
         return self.candidates[self.index] if self.candidates else ""
@@ -28,6 +29,16 @@ class SuggestionSession:
         self.index = max(0, min(len(self.candidates) - 1, self.index + delta))
         return self.candidates[self.index]
 
+    def go_short(self):
+        """Choose the shortest alternative that short reroll has not shown yet."""
+        choices = (i for i in range(len(self.candidates))
+                   if i != self.index and i not in self.short_seen)
+        index = min(choices, key=lambda i: (len(self.candidates[i]), i), default=None)
+        if index is not None:
+            self.index = index
+            self.short_seen.add(index)
+        return self.current()
+
     @property
     def total(self):
         return len(self.candidates)
@@ -38,12 +49,17 @@ class SuggestionSession:
 
 
 class WordService:
-    def __init__(self, word_manager, typer, screen_reader, autoplay_state, missing_prompts=None):
+    def __init__(self, word_manager, typer, screen_reader, autoplay_state,
+                 missing_prompts=None, match_summary=None):
         self.word_manager = word_manager
         self.typer = typer
         self.screen_reader = screen_reader
         self.autoplay_state = autoplay_state
         self.missing_prompts = missing_prompts  # registro de prompts sem palavra (manutenção)
+        self.match_summary = match_summary
+        self.last_summary = None
+        self.reset_notice = ""
+        self.action_notice = ""
         self.on_word_found_callback = None
         # Sessão de sugestões do prompt atual (feature Reroll). Recriada a cada novo prompt.
         self._session = None
@@ -53,8 +69,15 @@ class WordService:
         """Callback chamado pelo ScreenReader quando a sílaba é detectada.
         Cria uma SuggestionSession nova (descarta a navegação do prompt anterior)."""
         if not prompt_text:
-            self._set_session(None)
+            self.finish_turn()
             return False
+
+        with self._session_lock:
+            previous_prompt = self._session.prompt if self._session else None
+        if previous_prompt == prompt_text:
+            self.reject_current()
+        elif previous_prompt:
+            self.finish_turn()
 
         self.autoplay_state.add_log(f"Prompt: '{prompt_text}'")
 
@@ -62,10 +85,8 @@ class WordService:
         if config.get("lang"):
             self.word_manager.current_language = config["lang"]
 
-        self.word_manager.set_recover_config(
-            int(config.get("recover_target", 2)),
-            config.get("recover_exclude", ""),
-        )
+        self.word_manager.configure_recover(
+            config.get("recover_mode", "casual"), config.get("recover_exclude", ""))
 
         candidates = self.word_manager.get_candidates(
             prompt_text,
@@ -84,6 +105,8 @@ class WordService:
 
         if not candidates:
             self.autoplay_state.add_log(f"Nenhuma palavra para '{prompt_text}'")
+            if self.match_summary:
+                self.match_summary.record_missing_prompt(prompt_text)
             # Manutenção do dicionário: prompt já confirmado pelo pipeline, mas sem palavra.
             if self.missing_prompts:
                 self.missing_prompts.record(prompt_text)
@@ -91,9 +114,6 @@ class WordService:
             return False
 
         primary = candidates[0]
-        # Mantém o comportamento existente: a sugestão primária é marcada como usada.
-        # (O reroll NÃO marca — só navega.)
-        self.word_manager.mark_used(primary)
         self._set_session(SuggestionSession(prompt_text, candidates))
         self.autoplay_state.add_log(f"Match ready: '{primary}'")
 
@@ -131,6 +151,69 @@ class WordService:
     def reroll_prev(self):
         return self.reroll(-1)
 
+    def reroll_short(self):
+        with self._session_lock:
+            if not self._session:
+                return None
+            word = self._session.go_short()
+            self.screen_reader.suggested_word = word
+            self.screen_reader.suggestion_index = self._session.position
+            return {"word": word, "index": self._session.position,
+                    "total": self._session.total}
+
+    def finish_turn(self):
+        """Confirm the displayed suggestion once the turn has ended."""
+        with self._session_lock:
+            session = self._session
+        if session:
+            self.word_manager.mark_used(session.current())
+            if self.match_summary:
+                self.match_summary.record_confirmed_word(
+                    session.prompt, session.current(), "turn_end")
+            self._set_session(None)
+
+    def reject_current(self):
+        """Exclude the displayed word from this match without advancing Recover."""
+        with self._session_lock:
+            if not self._session:
+                return None
+            rejected = self._session.current()
+            self._session.candidates.pop(self._session.index)
+            if not self._session.candidates:
+                self._session = None
+                self.screen_reader.suggested_word = ""
+                self.screen_reader.suggestion_index = 0
+                self.screen_reader.suggestion_total = 0
+                result = {"word": "", "index": 0, "total": 0, "rejected": rejected}
+            else:
+                self._session.index = min(self._session.index, len(self._session.candidates) - 1)
+                self._session.short_seen = {self._session.index}
+                self.screen_reader.suggested_word = self._session.current()
+                self.screen_reader.suggestion_index = self._session.position
+                self.screen_reader.suggestion_total = self._session.total
+                result = {"word": self._session.current(), "index": self._session.position,
+                          "total": self._session.total, "rejected": rejected}
+        self.word_manager.reject_word(rejected)
+        self.action_notice = f"{rejected.upper()} foi removida do dicionário."
+        self.autoplay_state.add_log(f"Palavra removida do dicionário: '{rejected}'")
+        if self.match_summary:
+            self.match_summary.record_rejection(self.screen_reader.preview_prompt, rejected)
+        return result
+
+    def correct_prompt(self, prompt):
+        """Discard an OCR suggestion and search the user-confirmed prompt."""
+        prompt = (prompt or "").strip().lower()
+        if not 2 <= len(prompt) <= 6 or not all(c.isalpha() or c in "-'" for c in prompt):
+            raise ValueError("Prompt inválido")
+        self._set_session(None)
+        self.screen_reader.override_prompt(prompt)
+        self.on_prompt_found(prompt)
+        with self._session_lock:
+            if not self._session:
+                return {"word": "", "index": 0, "total": 0}
+            return {"word": self._session.current(), "index": self._session.position,
+                    "total": self._session.total}
+
     def get_word_from_payload(self, data):
         """Endpoint /api/word — busca palavra e opcionalmente digita."""
         params = WordSelectionParams(
@@ -150,10 +233,8 @@ class WordService:
             suffix=data.get("suffix", ""),
         )
 
-        self.word_manager.set_recover_config(
-            to_int(data.get("recover_target", 2), 2),
-            data.get("recover_exclude", ""),
-        )
+        self.word_manager.configure_recover(
+            data.get("recover_mode", "casual"), data.get("recover_exclude", ""))
         self.word_manager.current_language = params.lang
 
         word = self.word_manager.get_word(
@@ -178,6 +259,10 @@ class WordService:
         return word
 
     def reset_words(self):
+        if self.match_summary:
+            self.last_summary = self.match_summary.reset()
+        self.reset_notice = "Partida reiniciada"
+        self.action_notice = ""
         self.word_manager.reset_used()
         self._set_session(None)
         self.screen_reader.last_suggested_prompt = ""

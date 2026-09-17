@@ -19,6 +19,7 @@ class AutoplayStateService:
             "finish_with_letters": "",
             "recover_target": 2,
             "recover_exclude": "",
+            "recover_mode": "casual",
             "priority_sublist": "",
             "auto_type": False,
         }
@@ -48,6 +49,8 @@ class AutoplayStateService:
                         "starts_with_letters", "finish_with_letters", "recover_exclude", "priority_sublist"):
                 if key in data:
                     self.config[key] = data[key]
+            if data.get("recover_mode") in ("casual", "ranked"):
+                self.config["recover_mode"] = data["recover_mode"]
             for key in ("min_len", "max_len", "priority_min_len", "priority_max_len", "recover_target"):
                 if key in data:
                     self.config[key] = to_int(data[key], self.config[key])

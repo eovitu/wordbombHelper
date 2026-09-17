@@ -4,6 +4,7 @@ import shutil
 import threading
 import time
 import logging
+import json
 
 import cv2
 import mss
@@ -44,7 +45,10 @@ _OCR_CONFIG_FAST = "--oem 0 --psm 11 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOP
 _OCR_CONFIG_FALLBACK = "--oem 3 --psm 11 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-' "
 
 # Whitelist (só os chars) para o engine in-process via C-API.
-_OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-'"
+# Inclui o apóstrofe curvo ’ (U+2019) além do reto ': o OCR costuma classificar o glifo
+# de apóstrofe como curvo, e sem ele na whitelist o caractere seria descartado (lendo
+# "pau" em vez de "pa'u"). A canonicalização curvo→reto acontece em _clean_ocr_token.
+_OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-'’"
 _OCR_PSM = 11  # sparse text: encontra sílaba + "SUA VEZ" como tokens separados
 
 
@@ -135,6 +139,11 @@ class ScreenReader:
         self.save_debug_screenshots = os.getenv("WORDBOMB_OCR_DEBUG", "").strip() in ("1", "true", "True", "yes")
         self._debug_dir = os.path.join(os.getcwd(), "debug_screenshots")
 
+        # TRACE TEMPORÁRIO do prompt (diagnóstico do "prompt de 2 letras some"): quando
+        # WORDBOMB_PROMPT_TRACE=1, loga cada etapa em INFO (OCR_RAW → ASSEMBLED → FILTER →
+        # HYSTERESIS → COMMITTED). NÃO muda comportamento. Remover após investigar.
+        self._prompt_trace = os.getenv("WORDBOMB_PROMPT_TRACE", "").strip() in ("1", "true", "True", "yes")
+
         # OCR in-process (libtesseract via ctypes): ~5-8ms estável, sem subprocess.
         # Inicializado lazy na 1ª leitura. Se a DLL não carregar, cai para pytesseract.
         self._warm_ocr = None
@@ -155,6 +164,27 @@ class ScreenReader:
         self._turn_miss_streak = 0
         self._prompt_confirm_streak = 0
         self._last_prompt_candidate = ""
+        self._manual_prompt_override = ""
+        self._manual_rejected_prompt = ""
+
+        # Diagnóstico OCR: guarda somente a última captura, compactada e limitada em
+        # tamanho. O estado é independente da máquina de detecção para que preview,
+        # correção manual e replay não alterem o turno nem o prompt travado.
+        self._diagnostics_lock = threading.Lock()
+        self._last_ocr_snapshot = None
+        self._last_ocr_event = {
+            "captured_at": None,
+            "candidate": "",
+            "confidence": -1.0,
+            "keyword_detected": False,
+            "is_my_turn": False,
+            "accepted_prompt": None,
+            "prompt_streak": 0,
+            "challenger": "",
+            "challenger_streak": 0,
+        }
+        self.diagnostic_preview_max_width = 1280
+        self.max_diagnostic_replays = 10
 
         # Palavras de UI que o OCR pode ler mas não são o prompt.
         self._UI_KEYWORDS = {
@@ -182,12 +212,224 @@ class ScreenReader:
             except Exception:
                 pass
 
+    # ── Diagnóstico OCR ─────────────────────────────────────────────────────
+
+    def _encode_diagnostic_image(self, image, extension, params=None):
+        """Codifica uma imagem de diagnóstico com largura limitada."""
+        if image is None or not getattr(image, "size", 0):
+            return None
+        height, width = image.shape[:2]
+        if width > self.diagnostic_preview_max_width:
+            scale = self.diagnostic_preview_max_width / width
+            image = cv2.resize(
+                image,
+                (self.diagnostic_preview_max_width, max(1, int(height * scale))),
+                interpolation=cv2.INTER_AREA,
+            )
+        ok, encoded = cv2.imencode(extension, image, params or [])
+        return encoded.tobytes() if ok else None
+
+    def _record_ocr_diagnostic(self, preview_image, processed_image, metadata):
+        """Substitui o único snapshot em memória após uma passagem real de OCR."""
+        snapshot = {
+            "preview": self._encode_diagnostic_image(
+                preview_image, ".jpg", [cv2.IMWRITE_JPEG_QUALITY, 85]),
+            "processed": self._encode_diagnostic_image(processed_image, ".png"),
+            "metadata": dict(metadata),
+        }
+        with self._diagnostics_lock:
+            self._last_ocr_snapshot = snapshot
+            self._last_ocr_event = {
+                "captured_at": metadata["captured_at"],
+                "candidate": metadata["candidate"],
+                "confidence": metadata["confidence"],
+                "keyword_detected": metadata["keyword_detected"],
+                "is_my_turn": metadata["is_my_turn"],
+                "accepted_prompt": metadata["accepted_prompt"],
+                "prompt_streak": self._prompt_confirm_streak,
+                "challenger": self._challenger,
+                "challenger_streak": self._challenger_streak,
+            }
+
+    def get_last_capture_snapshot(self, image="preview"):
+        """Retorna a última captura OCR como {image, mime_type, metadata}, ou ``None``.
+
+        ``image`` aceita ``preview`` (recorte colorido) ou ``processed`` (imagem binária
+        enviada ao OCR). Os bytes retornados são cópias compactadas; não expõem arrays vivos.
+        """
+        if image not in ("preview", "processed"):
+            raise ValueError("image deve ser 'preview' ou 'processed'")
+        with self._diagnostics_lock:
+            if not self._last_ocr_snapshot:
+                return None
+            encoded = self._last_ocr_snapshot[image]
+            if encoded is None:
+                return None
+            return {
+                "image": bytes(encoded),
+                "mime_type": "image/jpeg" if image == "preview" else "image/png",
+                "metadata": dict(self._last_ocr_snapshot["metadata"]),
+            }
+
+    def get_preview_png(self):
+        """Retorna bytes da prévia colorida mais recente, ou ``None`` sem captura."""
+        snapshot = self.get_last_capture_snapshot("preview")
+        if not snapshot:
+            return None
+        image = cv2.imdecode(np.frombuffer(snapshot["image"], dtype=np.uint8), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        ok, encoded = cv2.imencode(".png", image)
+        return encoded.tobytes() if ok else None
+
+    def get_ocr_uncertainty(self):
+        """Expõe o motivo da leitura pendente sem modificar o estado de detecção."""
+        with self._diagnostics_lock:
+            event = dict(self._last_ocr_event)
+
+        candidate = event["candidate"]
+        confidence = event["confidence"]
+        # Esses contadores são atualizados pela thread de observação após a captura.
+        # Lê-los aqui faz o status refletir a confirmação mais recente, sem modificá-la.
+        prompt_streak = self._prompt_confirm_streak
+        challenger_streak = self._challenger_streak
+        event["prompt_streak"] = prompt_streak
+        event["challenger"] = self._challenger
+        event["challenger_streak"] = challenger_streak
+        reason = None
+        if event["is_my_turn"] and candidate and event["accepted_prompt"] is None:
+            reason = "low_confidence" if confidence < self.prompt_conf_threshold else "awaiting_confirmation"
+        elif prompt_streak and prompt_streak < 2 and confidence < self.instant_accept_conf:
+            reason = "awaiting_confirmation"
+        elif challenger_streak and challenger_streak < self.switch_confirm_frames:
+            reason = "awaiting_prompt_switch"
+
+        event.update({
+            "uncertain": reason is not None,
+            "reason": reason,
+            "manual_prompt_override": self._manual_prompt_override or None,
+            "prompt_conf_threshold": self.prompt_conf_threshold,
+            "instant_accept_conf": self.instant_accept_conf,
+            "required_prompt_frames": 2,
+            "required_switch_frames": self.switch_confirm_frames,
+        })
+        return event
+
+    def override_prompt(self, prompt):
+        """Trava uma correção manual até o turno terminar, sem disparar callbacks.
+
+        O chamador deve atualizar a sugestão antes ou depois desta chamada. A detecção OCR
+        segue rodando para diagnóstico, mas não pode trocar esse lock durante o mesmo turno.
+        """
+        normalized = self._clean_ocr_token(prompt).lower()
+        if not (self.min_prompt_len <= len(normalized) <= self.max_prompt_len):
+            raise ValueError("prompt manual deve ter entre %d e %d caracteres" % (
+                self.min_prompt_len, self.max_prompt_len))
+        self._manual_rejected_prompt = self.last_suggested_prompt
+        self._manual_prompt_override = normalized
+        self.last_suggested_prompt = normalized
+        self.preview_prompt = normalized
+        self._challenger = ""
+        self._challenger_streak = 0
+        self._absent_streak = 0
+        self._prompt_confirm_streak = 0
+        self._last_prompt_candidate = normalized
+        return normalized
+
+    def _handle_manual_override_candidate(self, prompt_text):
+        """Preserva a correção contra o OCR antigo e libera o próximo prompt estável."""
+        if not self._manual_prompt_override:
+            return False
+        if prompt_text in {self._manual_prompt_override, self._manual_rejected_prompt}:
+            self._challenger = ""
+            self._challenger_streak = 0
+            return True
+        if prompt_text == self._challenger:
+            self._challenger_streak += 1
+        else:
+            self._challenger = prompt_text
+            self._challenger_streak = 1
+        if self._challenger_streak >= self.switch_confirm_frames:
+            previous = self.last_suggested_prompt
+            self._manual_prompt_override = ""
+            self._manual_rejected_prompt = ""
+            self._log(f"Prompt após correção: '{previous}' → '{prompt_text}' "
+                      f"(confirmado {self._challenger_streak}x)")
+            self._commit_prompt(prompt_text)
+        return True
+
+    def replay_last_capture(self):
+        """Executa OCR novamente sobre o último binário salvo, sem tocar no loop de turno."""
+        snapshot = self.get_last_capture_snapshot("processed")
+        if not snapshot:
+            return None
+        image = cv2.imdecode(np.frombuffer(snapshot["image"], dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return None
+        candidate, confidence, keyword_detected = self._read_prompt_and_turn(image)
+        return {
+            "candidate": candidate,
+            "confidence": confidence,
+            "keyword_detected": keyword_detected,
+            "metadata": snapshot["metadata"],
+            "image": snapshot["image"],
+            "mime_type": snapshot["mime_type"],
+        }
+
+    def save_ocr_diagnostic_replay(self, directory=None):
+        """Persiste explicitamente o replay atual e limita o diretório aos N mais recentes."""
+        replay = self.replay_last_capture()
+        if not replay:
+            return None
+        target_dir = os.path.abspath(directory or os.path.join(self._debug_dir, "replays"))
+        os.makedirs(target_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        base = os.path.join(target_dir, "ocr-replay-" + stamp)
+        image_path = base + ".png"
+        metadata_path = base + ".json"
+        suffix = 1
+        while os.path.exists(image_path) or os.path.exists(metadata_path):
+            image_path = base + "-" + str(suffix) + ".png"
+            metadata_path = base + "-" + str(suffix) + ".json"
+            suffix += 1
+        with open(image_path, "wb") as image_file:
+            image_file.write(replay["image"])
+        metadata = dict(replay["metadata"])
+        metadata.update({
+            "replay_candidate": replay["candidate"],
+            "replay_confidence": replay["confidence"],
+            "replay_keyword_detected": replay["keyword_detected"],
+        })
+        with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+            json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
+
+        artifacts = sorted(
+            (path for path in os.scandir(target_dir) if path.name.startswith("ocr-replay-")),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for artifact in artifacts[self.max_diagnostic_replays * 2:]:
+            try:
+                os.remove(artifact.path)
+            except OSError:
+                logger.warning("Não foi possível remover replay OCR antigo: %s", artifact.path)
+        return {"image_path": image_path, "metadata_path": metadata_path, "replay": metadata}
+
+    def capture_ocr_replay(self):
+        """Cria um artefato explícito do último OCR para inspeção via rota local."""
+        return self.save_ocr_diagnostic_replay()
+
     # ── OCR core ────────────────────────────────────────────────────────────
 
     @staticmethod
     def _clean_ocr_token(text):
-        # Preserva hífen e apóstrofe para ler prompts como M-V e PA'U corretamente.
-        return "".join(ch for ch in (text or "") if ch.isalpha() or ch in "-'").upper()
+        # Preserva hífen e apóstrofe (prompts como M-V e PA'U). Canonicaliza variantes de
+        # apóstrofe que o OCR às vezes devolve (curvo ’, esquerdo ‘, acento ´, crase `) para
+        # o reto ' usado no dicionário — senão "pa'u" viraria "pau" e não casaria.
+        s = text or ""
+        for ch in "’‘´`":
+            s = s.replace(ch, "'")
+        return "".join(ch for ch in s if ch.isalpha() or ch in "-'").upper()
 
     def _ensure_warm_ocr(self):
         """Inicializa o engine in-process na 1ª chamada. Idempotente e thread-safe."""
@@ -220,7 +462,7 @@ class ScreenReader:
         return self._pytesseract_tokens(gray_img)
 
     def _pytesseract_tokens(self, gray_img):
-        """Caminho legado: pytesseract via subprocess. Retorna [(text, conf, height)]."""
+        """Caminho legado: pytesseract via subprocess. Retorna [(text, conf, height, top, left)]."""
         pil_img = Image.fromarray(gray_img)
         try:
             data = pytesseract.image_to_data(
@@ -243,6 +485,7 @@ class ScreenReader:
         confs = data.get("conf", [])
         heights = data.get("height", [])
         tops = data.get("top", [])
+        lefts = data.get("left", [])
         out = []
         for i, txt in enumerate(texts):
             if not (txt or "").strip():
@@ -259,48 +502,98 @@ class ScreenReader:
                 top = int(tops[i])
             except (TypeError, ValueError, IndexError):
                 top = 0
-            out.append((txt, conf, height, top))
+            try:
+                left = int(lefts[i])
+            except (TypeError, ValueError, IndexError):
+                left = 0
+            out.append((txt, conf, height, top, left))
         return out
+
+    @staticmethod
+    def _collapse_apos_dups(s):
+        """Colapsa apóstrofes/hífens repetidos consecutivos (cursor '|' lido como ', ou
+        dupla leitura do mesmo glifo → 'd''' vira 'd''). Nenhuma sílaba real tem '' ou --."""
+        out = []
+        for ch in s:
+            if ch in "-'" and out and out[-1] == ch:
+                continue
+            out.append(ch)
+        return "".join(out)
+
+    @staticmethod
+    def _select_prompt_from_tokens(tokens, min_h, min_len, max_len, ui_keywords):
+        """Monta a sílaba a partir dos tokens do OCR. tokens: [(clean_upper, conf, height,
+        top, left)]. Retorna (candidate_lower, conf).
+
+        Por quê montar em vez de pegar um token só: o Tesseract às vezes separa o apóstrofe/
+        hífen da borda em seu próprio token (ex.: 'AL → ' + AL). O token de pontuação é
+        baixinho e seria descartado pelos filtros, perdendo o apóstrofe. Aqui:
+        1) acha o ANCHOR = token alto (height>=min_h) com letras, mais ALTO na tela (menor
+           top) — isso ignora os tiles da palavra digitada, que ficam abaixo;
+        2) junta os tokens da MESMA linha do anchor (apóstrofe/hífen sempre; alfabéticos só
+           se também altos), ordenados pela esquerda (left), e concatena;
+        3) colapsa pontuação duplicada."""
+        valid = [t for t in tokens if t[0] and t[0] not in ui_keywords]
+        anchors = [t for t in valid if t[2] >= min_h and any(c.isalpha() for c in t[0])]
+        if not anchors:
+            return "", -1.0
+        anchor = min(anchors, key=lambda t: (t[3], -t[2]))  # mais alto; empate = maior altura
+        a_conf, a_h, a_top = anchor[1], anchor[2], anchor[3]
+        anchor_center_y = a_top + a_h * 0.5
+        lo, hi = a_top - a_h * 0.5, a_top + a_h * 1.5
+
+        def in_line(t):
+            center_y = t[3] + t[2] * 0.5
+            if not (lo <= center_y <= hi):
+                return False
+            if t is anchor:
+                return True
+            is_punct = all(c in "-'" for c in t[0])  # apóstrofe/hífen isolado: sempre junta
+            if is_punct:
+                return True
+            # Tokens alfabéticos precisam compartilhar a linha de base. A janela ampla acima
+            # existe para pontuação; usá-la para letras juntava texto da linha seguinte.
+            return t[2] >= 0.6 * a_h and abs(center_y - anchor_center_y) <= 0.35 * a_h
+
+        line = sorted((t for t in valid if in_line(t)), key=lambda t: t[4])
+        assembled = ScreenReader._collapse_apos_dups("".join(t[0] for t in line)).lower()
+        if min_len <= len(assembled) <= max_len:
+            return assembled, a_conf
+        # Montagem estourou o tamanho (ruído juntou demais): cai para só o anchor.
+        anchor_only = anchor[0].lower()
+        if min_len <= len(anchor_only) <= max_len:
+            return anchor_only, a_conf
+        return "", -1.0
 
     def _read_prompt_and_turn(self, gray_img):
         """Uma leitura de OCR → (sílaba, confiança, keyword_turno_detectada).
 
-        Detecta a sílaba (token mais ALTO na região, excluindo UI) e se "SUA VEZ"/"TURN"
-        está presente, numa única passada sobre os tokens do Tesseract.
-
-        Por que o mais alto (e não o maior): o prompt fica SEMPRE acima dos tiles da palavra
-        sendo digitada. Pegar o token de menor `top` ignora esses tiles e mata a alucinação
-        em que fragmentos da palavra digitada viravam "prompts" (imt, mare, ey, yac, ...).
+        Monta a sílaba juntando os tokens da linha do prompt (ver _select_prompt_from_tokens)
+        e detecta "SUA VEZ"/"TURN", numa única passada sobre os tokens do Tesseract.
         """
         raw_tokens = self._get_ocr_tokens(gray_img)
 
-        tokens = []
-        best_candidate, best_confidence, best_height, best_top = "", -1.0, -1, None
+        all_clean = []       # texto limpo de todos (p/ keyword detection)
+        clean_tokens = []    # (clean_upper, conf, height, top, left) p/ montagem da sílaba
 
-        for txt, conf_val, height, top in raw_tokens:
+        for txt, conf_val, height, top, left in raw_tokens:
             clean = self._clean_ocr_token(txt)
             if not clean:
                 continue
-            tokens.append(clean)
+            all_clean.append(clean)
+            clean_tokens.append((clean, conf_val, height, top, left))
 
-            if clean in self._UI_KEYWORDS:
-                continue
-            if not (self.min_prompt_len <= len(clean) <= self.max_prompt_len):
-                continue
-            # Garbage filter: tokens muito pequenos são ruído (ex: noise de renderização).
-            # Prompts reais têm height >= 40px na imagem 2x; "SUA VEZ" tem ~18px.
-            if height < self.min_prompt_height:
-                continue
+        best_candidate, best_confidence = self._select_prompt_from_tokens(
+            clean_tokens, self.min_prompt_height, self.min_prompt_len,
+            self.max_prompt_len, self._UI_KEYWORDS)
 
-            # Sílaba = token mais ALTO na região (menor top). Empate: maior altura, depois conf.
-            # Isso prefere o prompt (no topo) aos tiles da palavra digitada (abaixo).
-            if (best_top is None or top < best_top
-                    or (top == best_top and (height > best_height
-                        or (height == best_height and conf_val > best_confidence)))):
-                best_candidate, best_confidence, best_height, best_top = clean.lower(), conf_val, height, top
+        if self._prompt_trace:
+            logger.info("TRACE OCR_RAW=%s | min_h=%d | ASSEMBLED=%r conf=%.1f",
+                        [(t[0], round(t[1], 1), t[2]) for t in clean_tokens],
+                        self.min_prompt_height, best_candidate, best_confidence)
 
         # joined sem hífen/apóstrofe para não quebrar keyword detection se OCR ler "SUA-VEZ".
-        joined_alpha = "".join(ch for ch in "".join(tokens) if ch.isalpha())
+        joined_alpha = "".join(ch for ch in "".join(all_clean) if ch.isalpha())
         keyword_detected = any(kw.replace(" ", "").replace("-", "").replace("'", "") in joined_alpha
                                for kw in self.turn_keywords)
 
@@ -351,6 +644,19 @@ class ScreenReader:
         white_count = cv2.countNonZero(cv2.inRange(hsv_small, lower_white, upper_white))
         if white_count <= self.min_white_pixels:
             res = ("", None, False)
+            self._record_ocr_diagnostic(img_bgr, None, {
+                "captured_at": time.time(),
+                "region": dict(coords),
+                "source_size": {"width": sct_img.width, "height": sct_img.height},
+                "processed_size": None,
+                "white_pixels": white_count,
+                "ocr_ms": None,
+                "candidate": "",
+                "confidence": -1.0,
+                "keyword_detected": False,
+                "is_my_turn": False,
+                "accepted_prompt": None,
+            })
             self._last_capture_result = res
             self._last_frame_hash = frame_hash
             return res
@@ -417,6 +723,24 @@ class ScreenReader:
 
         self._last_prompt_conf = candidate_conf if prompt_text else -1.0
 
+        if self._prompt_trace and (candidate or is_my_turn):
+            logger.info("TRACE AFTER_FILTER candidate=%r conf=%.1f kw=%s turn=%s -> prompt_text=%r",
+                        candidate, candidate_conf, keyword_detected, is_my_turn, prompt_text)
+
+        self._record_ocr_diagnostic(img_bgr, proc, {
+            "captured_at": time.time(),
+            "region": dict(coords),
+            "source_size": {"width": sct_img.width, "height": sct_img.height},
+            "processed_size": {"width": proc.shape[1], "height": proc.shape[0]},
+            "white_pixels": white_count,
+            "ocr_ms": round(ocr_ms, 3),
+            "candidate": candidate,
+            "confidence": candidate_conf,
+            "keyword_detected": bool(keyword_detected),
+            "is_my_turn": bool(is_my_turn),
+            "accepted_prompt": prompt_text,
+        })
+
         payload = (candidate, prompt_text, bool(is_my_turn))
         self._last_capture_result = payload
         self._last_frame_hash = frame_hash
@@ -427,6 +751,8 @@ class ScreenReader:
     def _commit_prompt(self, prompt_text):
         """Compromete um prompt novo: trava nele, loga e dispara a busca da palavra.
         Chamado só em aquisição inicial ou troca confirmada — nunca por leitura transitória."""
+        if self._prompt_trace:
+            logger.info("TRACE COMMITTED prompt=%r", prompt_text)
         self.last_suggested_prompt = prompt_text
         self.preview_prompt = prompt_text
         self._challenger = ""
@@ -474,6 +800,8 @@ class ScreenReader:
         self._absent_streak = 0
         self._prompt_confirm_streak = 0
         self._last_prompt_candidate = ""
+        self._manual_prompt_override = ""
+        self._manual_rejected_prompt = ""
         if had_lock and self.callback_found_word:
             self.callback_found_word("")
 
@@ -522,6 +850,7 @@ class ScreenReader:
                         else:
                             self._prompt_confirm_streak = 0
                             self._last_prompt_candidate = ""
+                        time.sleep(0.04)
                         continue
 
                     # (2) Reafirmação: mesma sílaba já travada → mantém, poupa CPU.
@@ -533,6 +862,12 @@ class ScreenReader:
                         time.sleep(0.04)  # estável: não gasta CPU à toa, segue responsivo
                         continue
 
+                    # Uma correção manual é autoritativa até o fim deste turno. O OCR ainda
+                    # é capturado e fica disponível no diagnóstico, mas não troca a sugestão.
+                    if self._handle_manual_override_candidate(prompt_text):
+                        time.sleep(0.04)
+                        continue
+
                     # (3) Aquisição inicial (ainda sem lock).
                     if not locked:
                         if prompt_text == self._last_prompt_candidate:
@@ -541,6 +876,11 @@ class ScreenReader:
                             self._last_prompt_candidate = prompt_text
                             self._prompt_confirm_streak = 1
                         high_conf = self._last_prompt_conf >= self.instant_accept_conf
+                        if self._prompt_trace:
+                            logger.info("TRACE HYSTERESIS candidate=%r streak=%d high_conf=%s (conf=%.1f) "
+                                        "-> %s", prompt_text, self._prompt_confirm_streak, high_conf,
+                                        self._last_prompt_conf,
+                                        "COMMIT" if (self._prompt_confirm_streak >= 2 or high_conf) else "aguarda 2º frame")
                         if self._prompt_confirm_streak < 2 and not high_conf:
                             continue  # sinal fraco: confirma no 2º frame antes de travar
                         self._commit_prompt(prompt_text)
@@ -721,7 +1061,7 @@ class ScreenReader:
     # ── Estado público ──────────────────────────────────────────────────────
 
     def get_state(self):
-        return {
+        state = {
             "status": self.status,
             "is_watching": self.is_watching,
             "calibration_step": self.calibration_step,
@@ -733,4 +1073,7 @@ class ScreenReader:
             "suggestion_total": self.suggestion_total,
             "turn_region": self.turn_region,
             "prompt_region": self.prompt_region,
+            "manual_prompt_override": self._manual_prompt_override or None,
         }
+        state["ocr_uncertain"] = self.get_ocr_uncertainty()
+        return state

@@ -45,6 +45,18 @@ class MissingPromptsStore:
             except Exception as exc:
                 logger.warning("missing_prompts: falha ao salvar (%s)", exc)
 
+    def clear(self):
+        """Esvazia o registro e apaga o arquivo persistido. Ferramenta de manutenção:
+        usar depois de adicionar as palavras faltantes ao dicionário (senão a entrada
+        antiga continua aparecendo e confunde)."""
+        with self._lock:
+            self._counts = {}
+            try:
+                if os.path.exists(self._store_file):
+                    os.remove(self._store_file)
+            except Exception as exc:
+                logger.warning("missing_prompts: falha ao limpar %s (%s)", self._store_file, exc)
+
     def snapshot(self, limit=50):
         """Lista [{prompt, count}] ordenada por contagem desc (para exibir/consultar)."""
         with self._lock:

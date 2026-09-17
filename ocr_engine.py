@@ -124,13 +124,16 @@ class WarmTesseract:
         lib = self._lib
         lib.TessBaseAPISetPageSegMode(self._api, int(psm))
         if whitelist is not None:
-            lib.TessBaseAPISetVariable(self._api, b"tessedit_char_whitelist", whitelist.encode("ascii"))
+            # utf-8 (não ascii): permite variantes não-ASCII na whitelist, como o apóstrofe
+            # tipográfico ’ (U+2019), que o OCR costuma devolver no lugar do reto '.
+            lib.TessBaseAPISetVariable(self._api, b"tessedit_char_whitelist", whitelist.encode("utf-8"))
 
     def read_tokens(self, gray_img):
-        """OCR de uma imagem grayscale (numpy uint8, 1 canal) → [(text, conf, height, top)].
+        """OCR de uma imagem grayscale (numpy uint8, 1 canal) → [(text, conf, height, top, left)].
 
-        `top` = coordenada y do topo do token (px), usada para preferir o token mais alto
-        (o prompt fica sempre acima dos tiles da palavra digitada)."""
+        `top`/`left` = coordenadas y/x do canto do token (px). `top` prefere o token mais
+        alto (o prompt fica sempre acima dos tiles); `left` ordena tokens da mesma linha
+        para remontar sílabas que o Tesseract separa (ex.: 'AL → ' + AL)."""
         import numpy as np
         c = ctypes_mod
         if gray_img.ndim != 2:
@@ -162,10 +165,12 @@ class WarmTesseract:
                                 pi, _RIL_WORD, c.byref(x1), c.byref(y1), c.byref(x2), c.byref(y2)):
                             top = y1.value
                             height = y2.value - y1.value
+                            left = x1.value
                         else:
                             top = 0
                             height = 0
-                        tokens.append((text, conf, height, top))
+                            left = 0
+                        tokens.append((text, conf, height, top, left))
                     if not self._lib.TessResultIteratorNext(ri, _RIL_WORD):
                         break
             finally:

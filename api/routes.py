@@ -1,9 +1,17 @@
 import json
 import logging
+import threading
 import time
+from dataclasses import asdict
 
-from flask import Blueprint, Response, jsonify, stream_with_context
+from flask import Blueprint, Response, jsonify, request, stream_with_context
 
+from application.calibration_profiles import (CalibrationProfileNotFoundError,
+                                              CalibrationProfilesError,
+                                              CalibrationProfileValidationError)
+from application.personal_dictionary import (NotFoundError, PersonalDictionaryError,
+                                             UndoUnavailableError, ValidationError)
+from application.practice_service import PracticeError
 from shared.parsing import json_or_empty
 
 logger = logging.getLogger(__name__)
@@ -11,15 +19,22 @@ logger = logging.getLogger(__name__)
 
 def create_api_blueprint(deps):
     wm = deps["word_manager"]
+    personal_dictionary = deps["personal_dictionary"]
+    calibration_profiles = deps["calibration_profiles"]
+    solve_region_store = deps["solve_region_store"]
+    practice_service = deps["practice_service"]
     screen_reader = deps["screen_reader"]
     word_service = deps["word_service"]
     autoplay_state = deps["autoplay_state"]
     preset_service = deps["preset_service"]
     region_store = deps["region_store"]
     used_word_scanner = deps.get("used_word_scanner")
+    match_summary = deps.get("match_summary")
     optional_auth_required = deps["optional_auth_required"]
 
     bp = Blueprint("api", __name__)
+    practice_lock = threading.Lock()
+    practice_session = {"round": None, "mode": "normal", "started_at": None}
 
     @bp.route("/api/languages")
     def get_languages():
@@ -63,6 +78,27 @@ def create_api_blueprint(deps):
     def reroll_next():
         return jsonify(word_service.reroll_next() or {"word": "", "index": 0, "total": 0})
 
+    @bp.route("/api/reroll/short", methods=["POST"])
+    @optional_auth_required
+    def reroll_short():
+        return jsonify(word_service.reroll_short() or {"word": "", "index": 0, "total": 0})
+
+    @bp.route("/api/prompt/correct", methods=["POST"])
+    @optional_auth_required
+    def correct_prompt():
+        try:
+            return jsonify(word_service.correct_prompt(json_or_empty().get("prompt")))
+        except ValueError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+
+    @bp.route("/api/word/reject", methods=["POST"])
+    @optional_auth_required
+    def reject_word():
+        result = word_service.reject_current()
+        if result is None:
+            return jsonify({"status": "error", "message": "Nenhuma sugestão ativa"}), 409
+        return jsonify(result)
+
     @bp.route("/api/reroll/prev", methods=["POST"])
     @optional_auth_required
     def reroll_prev():
@@ -74,6 +110,19 @@ def create_api_blueprint(deps):
         word_service.reset_words()
         if used_word_scanner:
             used_word_scanner.reset()  # esquece palavras aprendidas (novo match)
+            # OCR ambíguo é dado de manutenção do match atual → zera junto com as palavras.
+            amb = getattr(used_word_scanner, "ambiguous_store", None)
+            if amb:
+                amb.clear()
+        return jsonify({"status": "success"})
+
+    @bp.route("/api/missing_prompts/clear", methods=["POST"])
+    @optional_auth_required
+    def clear_missing_prompts():
+        """Limpa o registro de prompts sem palavra (após adicionar as palavras ao dicionário)."""
+        store = getattr(word_service, "missing_prompts", None)
+        if store:
+            store.clear()
         return jsonify({"status": "success"})
 
     @bp.route("/api/calibration/start", methods=["POST"])
@@ -134,6 +183,7 @@ def create_api_blueprint(deps):
         """
         def generate():
             last = {}
+            idle_ticks = 0
             try:
                 while True:
                     cur = {
@@ -146,7 +196,16 @@ def create_api_blueprint(deps):
                     }
                     if cur != last:
                         last = dict(cur)
+                        idle_ticks = 0
                         yield f"data: {json.dumps(cur)}\n\n"
+                    else:
+                        # Sem mudança: a cada ~15s manda um comentário-keepalive. Isso força
+                        # uma escrita no socket; se o cliente desconectou ocioso, o broken-pipe
+                        # dispara GeneratorExit e a thread encerra (senão giraria para sempre).
+                        idle_ticks += 1
+                        if idle_ticks >= 750:
+                            idle_ticks = 0
+                            yield ": keepalive\n\n"
                     time.sleep(0.020)
             except GeneratorExit:
                 pass
@@ -164,6 +223,14 @@ def create_api_blueprint(deps):
         state["logs"] = autoplay_state.last_logs(10)
         state["autoplay_lang"] = cfg.get("lang")
         state["autoplay_strategy"] = cfg.get("strategy")
+        state["recover_progress"] = wm.recover_progress()
+        state["reset_notice"] = getattr(word_service, "reset_notice", "")
+        state["action_notice"] = getattr(word_service, "action_notice", "")
+        if match_summary:
+            state["match_summary"] = match_summary.snapshot()
+        last_summary = getattr(word_service, "last_summary", None)
+        if last_summary is not None:
+            state["last_match_summary"] = last_summary
         if used_word_scanner:
             state["learned_words"] = used_word_scanner.learned_count
             state["solve_region_set"] = used_word_scanner.source.region_ready()
@@ -173,6 +240,201 @@ def create_api_blueprint(deps):
         if used_word_scanner and getattr(used_word_scanner, "ambiguous_store", None):
             state["ambiguous_words"] = used_word_scanner.ambiguous_store.snapshot()
         return state
+
+    @bp.route("/api/ocr/preview")
+    def ocr_preview():
+        data = screen_reader.get_preview_png()
+        if data is None:
+            return jsonify({"status": "error", "message": "Ainda não há captura"}), 404
+        return Response(data, mimetype="image/png", headers={"Cache-Control": "no-store"})
+
+    @bp.route("/api/ocr/replay", methods=["POST"])
+    @optional_auth_required
+    def save_ocr_replay():
+        result = screen_reader.capture_ocr_replay()
+        if result is None:
+            return jsonify({"status": "error", "message": "Ainda não há captura"}), 404
+        return jsonify(result)
+
+    def dictionary_response(action):
+        try:
+            return jsonify(action())
+        except ValidationError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        except NotFoundError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 404
+        except UndoUnavailableError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 409
+        except PersonalDictionaryError as exc:
+            logger.error("Dictionary operation failed: %s", exc)
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+    @bp.route("/api/dictionary")
+    def dictionary_list():
+        lang = request.args.get("lang", "")
+        return dictionary_response(lambda: {"words": personal_dictionary.get_words(lang)})
+
+    @bp.route("/api/dictionary/add", methods=["POST"])
+    @optional_auth_required
+    def dictionary_add():
+        data = json_or_empty()
+        def action():
+            language = data.get("lang")
+            raw = data.get("word")
+            tokens = raw.split() if isinstance(raw, str) else []
+            if len(tokens) <= 1:
+                word = personal_dictionary.add(language, raw)
+                wm.refresh_language(language)
+                return {"word": word}
+            preview = personal_dictionary.preview_import(language, raw)
+            added = personal_dictionary.apply_import(preview)
+            if added:
+                wm.refresh_language(language)
+            return {"added": added, "duplicates": preview.duplicates}
+        return dictionary_response(action)
+
+    @bp.route("/api/dictionary/edit", methods=["POST"])
+    @optional_auth_required
+    def dictionary_edit():
+        data = json_or_empty()
+        def action():
+            word = personal_dictionary.edit(data.get("lang"), data.get("old_word"), data.get("new_word"))
+            wm.refresh_language(data["lang"])
+            return {"word": word}
+        return dictionary_response(action)
+
+    @bp.route("/api/dictionary/delete", methods=["POST"])
+    @optional_auth_required
+    def dictionary_delete():
+        data = json_or_empty()
+        def action():
+            personal_dictionary.delete(data.get("lang"), data.get("word"))
+            wm.refresh_language(data["lang"])
+            return {"status": "success"}
+        return dictionary_response(action)
+
+    @bp.route("/api/dictionary/preview-import", methods=["POST"])
+    @optional_auth_required
+    def dictionary_preview_import():
+        data = json_or_empty()
+        def action():
+            preview = personal_dictionary.preview_import(data.get("lang"), data.get("text"))
+            return {"new_words": preview.new_words, "duplicates": preview.duplicates,
+                    "invalid_lines": preview.invalid_lines}
+        return dictionary_response(action)
+
+    @bp.route("/api/dictionary/apply-import", methods=["POST"])
+    @optional_auth_required
+    def dictionary_apply_import():
+        data = json_or_empty()
+        def action():
+            preview = personal_dictionary.preview_import(data.get("lang"), data.get("text"))
+            added = personal_dictionary.apply_import(preview)
+            if added:
+                wm.refresh_language(data["lang"])
+            return {"added": added}
+        return dictionary_response(action)
+
+    @bp.route("/api/dictionary/undo", methods=["POST"])
+    @optional_auth_required
+    def dictionary_undo():
+        def action():
+            result = dict(personal_dictionary.undo())
+            wm.refresh_language(result["language"])
+            return result
+        return dictionary_response(action)
+
+    def profile_response(action):
+        try:
+            return jsonify(action())
+        except CalibrationProfileValidationError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        except CalibrationProfileNotFoundError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 404
+        except CalibrationProfilesError as exc:
+            logger.error("Calibration profile operation failed: %s", exc)
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+    @bp.route("/api/calibration/profiles")
+    def list_calibration_profiles():
+        return jsonify({"profiles": calibration_profiles.list_profiles()})
+
+    @bp.route("/api/calibration/profiles/save", methods=["POST"])
+    @optional_auth_required
+    def save_calibration_profile():
+        data = json_or_empty()
+        return profile_response(lambda: calibration_profiles.create(
+            data.get("name"), region_store.get_region(), solve_region_store.get_region()))
+
+    @bp.route("/api/calibration/profiles/activate", methods=["POST"])
+    @optional_auth_required
+    def activate_calibration_profile():
+        data = json_or_empty()
+        def action():
+            profile = calibration_profiles.activate(data.get("id"))
+            region_store.set_region(profile["turn_region"])
+            screen_reader.turn_region = profile["turn_region"]
+            screen_reader.prompt_region = profile["turn_region"]
+            if profile["solve_region"]:
+                solve_region_store.set_region(profile["solve_region"])
+            else:
+                solve_region_store.clear_persistence()
+            return profile
+        return profile_response(action)
+
+    @bp.route("/api/calibration/profiles/<profile_id>", methods=["DELETE"])
+    @optional_auth_required
+    def delete_calibration_profile(profile_id):
+        def action():
+            calibration_profiles.delete(profile_id)
+            return {"status": "success"}
+        return profile_response(action)
+
+    @bp.route("/api/practice/new", methods=["POST"])
+    @optional_auth_required
+    def new_practice_round():
+        data = json_or_empty()
+        mode = data.get("mode", "normal")
+        if mode not in ("normal", "hints"):
+            return jsonify({"status": "error", "message": "Modo de treino inválido"}), 400
+        try:
+            round_ = practice_service.generate_round(data.get("lang", "Português"))
+        except PracticeError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        with practice_lock:
+            practice_session.update({"round": round_, "mode": mode, "started_at": time.monotonic()})
+        return jsonify({"prompt": round_.prompt, "mode": mode})
+
+    @bp.route("/api/practice/check", methods=["POST"])
+    @optional_auth_required
+    def check_practice_answer():
+        data = json_or_empty()
+        with practice_lock:
+            round_ = practice_session["round"]
+            started_at = practice_session["started_at"]
+            if round_ is None:
+                return jsonify({"status": "error", "message": "Inicie um treino primeiro"}), 409
+            practice_session["round"] = None
+        elapsed = max(0.0, time.monotonic() - started_at)
+        try:
+            result = practice_service.evaluate(round_, data.get("answer", ""), elapsed_seconds=elapsed)
+        except PracticeError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
+        return jsonify(asdict(result))
+
+    @bp.route("/api/practice/hint", methods=["POST"])
+    @optional_auth_required
+    def practice_hint():
+        data = json_or_empty()
+        with practice_lock:
+            round_ = practice_session["round"]
+            mode = practice_session["mode"]
+        if round_ is None or mode != "hints":
+            return jsonify({"status": "error", "message": "Dicas indisponíveis"}), 409
+        try:
+            return jsonify(asdict(practice_service.hint(round_, data.get("kind"))))
+        except PracticeError as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 400
 
     @bp.route("/api/autoplay/config", methods=["POST"])
     @optional_auth_required

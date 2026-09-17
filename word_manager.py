@@ -4,11 +4,12 @@ import random
 import unicodedata
 import threading
 import logging
+import tempfile
 
 logger = logging.getLogger(__name__)
 
 class WordManager:
-    def __init__(self, wordlist_dir='wordlists'):
+    def __init__(self, wordlist_dir='wordlists', personal_dictionary=None):
         self._lock = threading.RLock()
         # Use absolute path relative to this file to ensure wordlists are found regardless of CWD
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,12 +17,16 @@ class WordManager:
             self.wordlist_dir = os.path.join(base_dir, 'wordlists')
         else:
             self.wordlist_dir = wordlist_dir
+        self.personal_dictionary = personal_dictionary
             
         self.wordlists = {}
         self.sublists = {}
         self.used_words = set()
-        self.recover_target = 2
-        self.recover_exclude = set()
+        self.rejected_words = set()
+        self.recover_mode = 'casual'
+        self.recover_cycle = 1
+        self.recover_target = 1
+        self.recover_exclude = {'k', 'w', 'y'}
         self.letter_targets = self._build_initial_targets()
         self.current_language = 'Inglês'
         self.current_alpha_char = 'a'
@@ -35,6 +40,11 @@ class WordManager:
         self._match_ambig = {}   # lang -> set(clean com >1 forma real → ambíguo)
         self._match_by_len = {}  # lang -> {comprimento: [clean...]}  (busca Hamming-1)
         self._match_sorted = {}  # lang -> [clean...] ordenado  (checagem de superset/prefixo)
+        # Índice "só-letras" (sem - e '): recupera leituras onde o OCR perdeu/inventou
+        # pontuação (ex.: 'paudalho' → "pau-d'alho"). Conservador: alpha que mapeia para
+        # mais de uma palavra real é marcado como ambíguo. Ver resolve_played_ocr passo (2).
+        self._match_alpha = {}       # lang -> {alpha_only: real_lower}
+        self._match_alpha_ambig = {} # lang -> set(alpha_only com >1 forma real → ambíguo)
 
     def _build_initial_targets(self):
         targets = {}
@@ -91,12 +101,40 @@ class WordManager:
         return lang
 
     def set_recover_config(self, target, exclude_str):
+        """Compatibility entry point for callers that still pass a target."""
         exclude_chars = self._parse_letter_set(exclude_str)
         # If config changed, reset the targets to prevent logic bugs
         if target != self.recover_target or exclude_chars != self.recover_exclude:
             self.recover_target = target
             self.recover_exclude = exclude_chars
             self.letter_targets = self._build_initial_targets()
+
+    def configure_recover(self, mode='casual', exclude_str=''):
+        if mode not in ('casual', 'ranked'):
+            raise ValueError('recover_mode must be casual or ranked')
+        excluded = {'k', 'w', 'y'} | self._parse_letter_set(exclude_str)
+        with self._lock:
+            if mode == self.recover_mode and excluded == self.recover_exclude:
+                return
+            self.recover_mode = mode
+            self.recover_exclude = excluded
+            self.recover_cycle = 1
+            self.recover_target = self._recover_target_for_cycle()
+            self.letter_targets = self._build_initial_targets()
+
+    def _recover_target_for_cycle(self):
+        if self.recover_mode == 'ranked':
+            return min(5, self.recover_cycle + 2)
+        return 1 if self.recover_cycle == 1 else 2
+
+    def recover_progress(self):
+        with self._lock:
+            return {
+                'mode': self.recover_mode,
+                'cycle': self.recover_cycle,
+                'target': self.recover_target,
+                'remaining': dict(self.letter_targets),
+            }
 
     def _load_language(self, lang):
         """Loads wordlists for a specific language from the specified directory.
@@ -109,42 +147,75 @@ class WordManager:
             self._load_language_unsafe(lang)
 
     def _load_language_unsafe(self, lang):
-        """Internal: Assumes lock is already held. Loads wordlists for a language."""
+        """Internal: Assumes lock is already held. Loads wordlists for a language.
+
+        Só abre os arquivos cujo nome casa com `lang` (lista principal ou sublista).
+        Antes este loop abria e parseava TODOS os .txt da pasta (inclusive os 3MB de
+        outro idioma) para carregar um só — O(arquivos) de IO desperdiçado por chamada.
+        """
         if not os.path.exists(self.wordlist_dir):
             os.makedirs(self.wordlist_dir)
             return
 
         for filename in os.listdir(self.wordlist_dir):
-            if filename.endswith('.txt'):
-                name = filename[:-4]  # remove .txt
-                try:
-                    with open(os.path.join(self.wordlist_dir, filename), 'r', encoding='utf-8') as f:
-                        words = [line.strip() for line in f if line.strip()]
-                        words_lower = [w.lower() for w in words]
-                        
-                        # Build length index for faster filtering
-                        len_map = {}
-                        for i, w_low in enumerate(words_lower):
-                            l = len(w_low)
-                            if l not in len_map:
-                                len_map[l] = []
-                            len_map[l].append(i)
-                            
-                        data = {'full': words, 'lower': words_lower, 'len_map': len_map}
+            if not filename.endswith('.txt'):
+                continue
+            name = filename[:-4]  # remove .txt
+            if '_' in name:
+                # Sub-list: e.g. 'Portuguese_palindromos' -> lang='Portuguese', sub='palindromos'
+                file_lang, sub = name.split('_', 1)
+            else:
+                file_lang, sub = name, None
+            if file_lang != lang:
+                continue  # arquivo de outro idioma — não abre/parseia
 
-                    if '_' in name:
-                        # Sub-list: e.g. 'Portuguese_palindromos' -> lang='Portuguese', sub='palindromos'
-                        parts = name.split('_', 1)
-                        file_lang, sub = parts[0], parts[1]
-                        if file_lang == lang:
-                            if lang not in self.sublists:
-                                self.sublists[lang] = {}
-                            self.sublists[lang][sub] = data
-                    else:
-                        if name == lang:
-                            self.wordlists[name] = data
-                except Exception as e:
-                    logger.error("Error loading %s: %s", filename, e)
+            try:
+                with open(os.path.join(self.wordlist_dir, filename), 'r', encoding='utf-8') as f:
+                    words = [line.strip() for line in f if line.strip()]
+                words_lower = [w.lower() for w in words]
+
+                # Build length index for faster filtering
+                len_map = {}
+                for i, w_low in enumerate(words_lower):
+                    len_map.setdefault(len(w_low), []).append(i)
+
+                data = {'full': words, 'lower': words_lower, 'len_map': len_map}
+
+                if sub is not None:
+                    if lang not in self.sublists:
+                        self.sublists[lang] = {}
+                    self.sublists[lang][sub] = data
+                else:
+                    self.wordlists[name] = data
+            except Exception as e:
+                logger.error("Error loading %s: %s", filename, e)
+
+        if self.personal_dictionary is not None:
+            personal = self.personal_dictionary.get_words(lang)
+            if personal:
+                data = self.wordlists.get(lang, {'full': [], 'lower': [], 'len_map': {}})
+                seen = set(data['lower'])
+                for word in personal:
+                    lower = word.lower()
+                    if lower in seen:
+                        continue
+                    index = len(data['full'])
+                    data['full'].append(word)
+                    data['lower'].append(lower)
+                    data['len_map'].setdefault(len(lower), []).append(index)
+                    seen.add(lower)
+                self.wordlists[lang] = data
+
+    def refresh_language(self, lang):
+        """Reload one language after personal edits without clearing match history."""
+        with self._lock:
+            resolved = self._resolve_language_name(lang)
+            self.wordlists.pop(resolved, None)
+            self.sublists.pop(resolved, None)
+            for cache in (self._match_index, self._match_ambig, self._match_by_len,
+                          self._match_sorted, self._match_alpha, self._match_alpha_ambig):
+                cache.pop(resolved, None)
+            self._load_language_unsafe(resolved)
 
     def get_sublists(self, lang):
         """Returns available sub-list names for the given language."""
@@ -217,6 +288,7 @@ class WordManager:
                 if prompt in word_lower
                 and min_len <= len(word_lower) <= max_len
                 and word_lower not in self.used_words
+                and word_lower not in self.rejected_words
             ]
             if sub_matches:
                 # Found in sub-list — use it directly (skip all other filters for simplicity)
@@ -250,12 +322,13 @@ class WordManager:
                 word_lower = data['lower'][i]
                 if ((not prefix_lower or word_lower.startswith(prefix_lower)) and
                     (not suffix_lower or word_lower.endswith(suffix_lower)) and
-                    word_lower not in self.used_words):
+                    word_lower not in self.used_words and word_lower not in self.rejected_words):
                     candidates.append(data['full'][i])
         else:
             for i in target_indices:
                 word_lower = data['lower'][i]
-                if prompt in word_lower and word_lower not in self.used_words:
+                if (prompt in word_lower and word_lower not in self.used_words
+                        and word_lower not in self.rejected_words):
                     candidates.append(data['full'][i])
 
         if not candidates:
@@ -395,9 +468,62 @@ class WordManager:
             with self._lock:
                 self._mark_used_locked(word)
 
+    def reject_word(self, word):
+        if word:
+            with self._lock:
+                normalized = word.lower()
+                self.rejected_words.add(normalized)
+                language = self._resolve_language_name(self.current_language)
+                self._remove_word_from_language_files_locked(language, normalized)
+                if self.personal_dictionary is not None:
+                    personal = self.personal_dictionary.get_words(language)
+                    if normalized in personal:
+                        self.personal_dictionary.delete(language, normalized)
+                self.refresh_language(language)
+
+    def _remove_word_from_language_files_locked(self, language, rejected):
+        """Remove permanentemente a palavra da lista principal e sublistas do idioma."""
+        if not os.path.isdir(self.wordlist_dir):
+            return
+        for filename in os.listdir(self.wordlist_dir):
+            if not filename.endswith('.txt'):
+                continue
+            stem = filename[:-4]
+            if stem != language and not stem.startswith(language + '_'):
+                continue
+            path = os.path.join(self.wordlist_dir, filename)
+            with open(path, 'r', encoding='utf-8') as handle:
+                lines = handle.readlines()
+            kept = [line for line in lines if line.strip().lower() != rejected]
+            if len(kept) == len(lines):
+                continue
+            fd, temporary = tempfile.mkstemp(
+                prefix=f'.{filename}.', suffix='.tmp', dir=self.wordlist_dir, text=True)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as handle:
+                    for line in kept:
+                        handle.write(line.rstrip('\r\n') + '\n')
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, path)
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                raise
+
+    def mark_unavailable(self, word):
+        """Exclude a played word without changing this player's Recover progress."""
+        if word:
+            with self._lock:
+                self.used_words.add(word.lower())
+
     def _mark_used_locked(self, word):
         """Marca a palavra como usada. ASSUME que self._lock já está retido."""
         w_lower = word.lower()
+        if w_lower in self.used_words:
+            return
         self.used_words.add(w_lower)
 
         # Clean accents to proper check against 'a'-'z' targets
@@ -410,6 +536,8 @@ class WordManager:
 
         # If all targets reached 0, reset the cycle back to the target count
         if all(v == 0 for v in self.letter_targets.values()):
+            self.recover_cycle += 1
+            self.recover_target = self._recover_target_for_cycle()
             self.letter_targets = self._build_initial_targets()
 
     @staticmethod
@@ -419,6 +547,10 @@ class WordManager:
         Chave canônica usada para casar leituras de OCR (Pipeline B) com a wordlist."""
         s = (text or "").strip().lower()
         s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+        # Canonicaliza variantes de apóstrofe (curvo ’/‘, acento ´, crase `) para o reto ',
+        # que é o usado no dicionário — o OCR costuma devolver o curvo ’ (U+2019).
+        for ch in "’‘´`":
+            s = s.replace(ch, "'")
         return ''.join(ch for ch in s if ch.isalpha() or ch in "-'")
 
     def _get_match_indexes(self, lang):
@@ -450,12 +582,30 @@ class WordManager:
         for c in idx:
             by_len.setdefault(len(c), []).append(c)
         sorted_keys = sorted(idx.keys())
+        # Índice só-letras (remove - e '): casa leituras com pontuação divergente.
+        # Conservador: se duas palavras reais colapsam para a mesma forma só-letras, ela
+        # vira ambígua (não marca). Punct-key já ambíguo propaga para a forma só-letras.
+        alpha_idx, alpha_ambig = {}, set()
+        for c, real in idx.items():
+            a = c.replace('-', '').replace("'", '')
+            if len(a) < 2:
+                continue
+            if c in ambig:
+                alpha_ambig.add(a)
+                continue
+            cur = alpha_idx.get(a)
+            if cur is None:
+                alpha_idx[a] = real
+            elif cur != real:
+                alpha_ambig.add(a)
         with self._lock:
             if resolved not in self._match_index:
                 self._match_index[resolved] = idx
                 self._match_ambig[resolved] = ambig
                 self._match_by_len[resolved] = by_len
                 self._match_sorted[resolved] = sorted_keys
+                self._match_alpha[resolved] = alpha_idx
+                self._match_alpha_ambig[resolved] = alpha_ambig
         return resolved
 
     @staticmethod
@@ -483,7 +633,7 @@ class WordManager:
                 found = c
         return found
 
-    def resolve_played_ocr(self, ocr_word, lang):
+    def resolve_played_ocr(self, ocr_word, lang, count_recover=True):
         """Casa a leitura OCR de uma palavra jogada com a forma canônica do dicionário, de
         modo CONSERVADOR (prioridade: zero falso positivo). Marca em used_words só quando
         não-ambíguo. Retorna (status, canonical):
@@ -491,34 +641,57 @@ class WordManager:
           'ambiguous' → havia mais de uma interpretação plausível → NÃO marcou;
           'unknown'   → não está no dicionário / sem candidato → NÃO marcou.
 
-        Regras: (1) match exato acento-insensível, aceito só se não houver superset nem
-        forma real duplicada; (2) senão, correção por 1 substituição de MESMO tamanho, aceita
-        só se houver exatamente um candidato. Inserção/remoção (tamanho diferente) é sempre
-        tratada como ambígua."""
+        Regras (em ordem): (1) match exato acento-insensível, aceito só se não houver superset
+        nem forma real duplicada; (2) recuperação por remoção de pontuação ('-' e "'"), aceita
+        só se a forma só-letras mapear para UMA palavra real; (3) correção por 1 substituição
+        de MESMO tamanho, aceita só se houver exatamente um candidato. Em todos, ambiguidade
+        nunca marca — prioridade é zero falso positivo."""
         key = self.normalize_token(ocr_word)
         if not key or len(key) < 2:
             return ("unknown", None)
         resolved = self._get_match_indexes(lang)
         if resolved is None:
             return ("unknown", None)
-        idx = self._match_index[resolved]
-        ambig = self._match_ambig[resolved]
+        # Snapshot dos índices SOB o lock: reset_used() pode limpá-los em outra thread
+        # entre o build e o uso. Pegamos as referências de uma vez para evitar KeyError.
+        with self._lock:
+            idx = self._match_index.get(resolved)
+            ambig = self._match_ambig.get(resolved)
+            sorted_keys = self._match_sorted.get(resolved)
+            by_len = self._match_by_len.get(resolved)
+            alpha_idx = self._match_alpha.get(resolved)
+            alpha_ambig = self._match_alpha_ambig.get(resolved)
+        if idx is None:
+            return ("unknown", None)
+        same_len = by_len.get(len(key), ()) if by_len else ()
 
         # (1) Match exato acento-insensível
         if key in idx:
-            if key in ambig or self._has_proper_superset(key, self._match_sorted[resolved]):
+            if key in ambig or self._has_proper_superset(key, sorted_keys):
                 return ("ambiguous", None)
-            return (self._commit_match(idx[key]), idx[key])
+            return (self._commit_match(idx[key], count_recover), idx[key])
 
-        # (2) Correção por 1 substituição de mesmo tamanho (único candidato)
-        cand = self._unique_hamming1(key, self._match_by_len[resolved].get(len(key), ()))
+        # (2) Recuperação por remoção de pontuação: o OCR pode ter perdido ou inventado um
+        # '-' ou "'". Compara a forma só-letras com o índice só-letras. Aceita SÓ se mapear
+        # a UMA palavra real (colisão → ambíguo) — mantém o "zero falso positivo".
+        if alpha_idx is not None:
+            alpha_key = key.replace('-', '').replace("'", '')
+            if len(alpha_key) >= 2:
+                if alpha_key in alpha_ambig:
+                    return ("ambiguous", None)
+                real_alpha = alpha_idx.get(alpha_key)
+                if real_alpha is not None:
+                    return (self._commit_match(real_alpha, count_recover), real_alpha)
+
+        # (3) Correção por 1 substituição de mesmo tamanho (único candidato)
+        cand = self._unique_hamming1(key, same_len)
         if cand is not None and cand not in ambig:
-            return (self._commit_match(idx[cand]), idx[cand])
+            return (self._commit_match(idx[cand], count_recover), idx[cand])
 
         # Múltiplos candidatos OU nenhum candidato de mesmo tamanho.
         # Distinguimos "ambíguo" (havia >1) de "unknown" só para o log de manutenção:
         # _unique_hamming1 já devolveu None para ambos; refazemos um teste barato de existência.
-        if self._any_hamming1(key, self._match_by_len[resolved].get(len(key), ())):
+        if self._any_hamming1(key, same_len):
             return ("ambiguous", None)
         return ("unknown", None)
 
@@ -535,24 +708,32 @@ class WordManager:
                 return True
         return False
 
-    def _commit_match(self, real):
+    def _commit_match(self, real, count_recover=True):
         """Marca a forma real como usada (idempotente). Retorna sempre 'marked'."""
         with self._lock:
             if real not in self.used_words:
-                self._mark_used_locked(real)
+                if count_recover:
+                    self._mark_used_locked(real)
+                else:
+                    self.used_words.add(real.lower())
         return "marked"
 
     def reset_used(self):
         """Resets used words history and clears memory cache of wordlists to force a disk reload."""
         with self._lock:
             self.used_words.clear()
+            self.rejected_words.clear()
             self.wordlists.clear()
             self.sublists.clear()
             self._match_index.clear()
             self._match_ambig.clear()
             self._match_by_len.clear()
             self._match_sorted.clear()
+            self._match_alpha.clear()
+            self._match_alpha_ambig.clear()
             self._lang_cache.clear()
+            self.recover_cycle = 1
+            self.recover_target = self._recover_target_for_cycle()
             self.letter_targets = self._build_initial_targets()
             self.current_alpha_char = 'a'
 

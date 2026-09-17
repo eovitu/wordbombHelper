@@ -25,7 +25,9 @@ from shared.parsing import normalize_capture_region
 
 logger = logging.getLogger(__name__)
 
-_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-'"
+# Inclui o apóstrofe curvo ’ (U+2019) além do reto ' — o OCR costuma devolver o curvo;
+# a canonicalização curvo→reto acontece em WordManager.normalize_token.
+_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-'’"
 
 
 class UsedWordSource:
@@ -143,14 +145,17 @@ class UsedWordScanner:
     """Laço de fundo que aprende palavras já jogadas e as marca no WordManager."""
 
     def __init__(self, word_manager, source, lang_getter, interval=0.75, is_active=None,
-                 ambiguous_store=None):
+                 ambiguous_store=None, personal_dictionary=None, match_summary=None):
         self.word_manager = word_manager
         self.source = source
         self.lang_getter = lang_getter          # callable -> idioma atual (str)
         self.interval = interval                # segundos entre varreduras (0.5-1.0)
         self.is_active = is_active              # callable -> só varre se True (ex: em partida)
         self.ambiguous_store = ambiguous_store  # registro de leituras ambíguas (manutenção)
+        self.personal_dictionary = personal_dictionary
+        self.match_summary = match_summary
         self._seen = set()                      # chaves já marcadas (dedup)
+        self._unknown_counts = {}
         self._thread = None
         self._stop = threading.Event()
         self._idle_warned = False
@@ -187,6 +192,7 @@ class UsedWordScanner:
     def reset(self):
         """Esquece as palavras aprendidas (novo match)."""
         self._seen.clear()
+        self._unknown_counts.clear()
         self.learned_count = 0
         with self._learned_lock:
             self._learned_log.clear()  # seq NÃO zera (high-water-mark do front)
@@ -221,25 +227,66 @@ class UsedWordScanner:
     def _scan_and_learn(self):
         words = self.source.poll()
         lang = self.lang_getter() if self.lang_getter else None
+        scan_keys = set()
         for raw in words:
             key = self.word_manager.normalize_token(raw)
-            if not key or len(key) < 2 or key in self._seen:
+            # Diagnóstico: nenhuma palavra é descartada sem rastro. Em DEBUG aparece o caminho
+            # completo (raw → normalizado → status). Veja em logs/wordbomb.log ou rode com
+            # WORDBOMB_LOG_LEVEL=DEBUG para ver no console.
+            if not key or len(key) < 2:
+                logger.debug("Pipeline B: descartado raw=%r key=%r motivo=curto(<2)", raw, key)
                 continue
-            self._seen.add(key)  # marca como vista mesmo se não casar (evita reprocesso)
+            if key in self._seen or key in scan_keys:
+                continue  # já processado (dedup intencional — não reprocessa a mesma leitura)
+            scan_keys.add(key)
             try:
-                status, canonical = self.word_manager.resolve_played_ocr(raw, lang)
+                status, canonical = self.word_manager.resolve_played_ocr(
+                    raw, lang, count_recover=False)
+                logger.debug("Pipeline B: raw=%r key=%r status=%s canonical=%r",
+                             raw, key, status, canonical)
                 if status == "marked":
+                    self._seen.add(key)
+                    self._unknown_counts.pop(key, None)
                     self.learned_count += 1
+                    if self.match_summary:
+                        self.match_summary.record_learned_word(canonical, "solve_panel")
                     with self._learned_lock:
                         self._learned_seq += 1
                         self._learned_log.append({"id": self._learned_seq, "word": canonical})
                         if len(self._learned_log) > 50:
                             self._learned_log.pop(0)
                 elif status == "ambiguous" and self.ambiguous_store:
+                    self._seen.add(key)
                     # Conservador: não marcamos. Registramos p/ o usuário revisar depois.
                     self.ambiguous_store.record(key)
+                elif status == "unknown" and self.personal_dictionary and lang and len(key) >= 3:
+                    # O usuário revisa adições automáticas no topo da lista pessoal.
+                    count = self._unknown_counts.get(key, 0) + 1
+                    self._unknown_counts[key] = count
+                    if count >= 3:
+                        from application.personal_dictionary import ValidationError
+                        try:
+                            canonical = self.personal_dictionary.prepend(lang, raw)
+                        except ValidationError:
+                            self._seen.add(key)
+                            continue
+                        self.word_manager.refresh_language(lang)
+                        self.word_manager.mark_unavailable(canonical)
+                        self._seen.add(key)
+                        self._unknown_counts.pop(key, None)
+                        self.learned_count += 1
+                        if self.match_summary:
+                            self.match_summary.record_learned_word(canonical, "solve_panel_new")
+                        with self._learned_lock:
+                            self._learned_seq += 1
+                            self._learned_log.append({"id": self._learned_seq, "word": canonical})
+                            if len(self._learned_log) > 50:
+                                self._learned_log.pop(0)
+                        logger.info("Pipeline B: palavra adicionada no topo para revisão: %s", canonical)
             except Exception as exc:
                 logger.debug("Pipeline B: erro ao resolver '%s' (%s)", key, exc)
+        for stale_key in set(self._unknown_counts) - scan_keys:
+            self._unknown_counts.pop(stale_key, None)
         # Sinaliza conclusão deste scan (acorda quem pediu catch-up).
         with self._cv:
             self._scan_seq += 1

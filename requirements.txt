@@ -1,9 +1,12 @@
-flask
-pyautogui
-keyboard
-pytesseract
-Pillow
-pynput
-opencv-python
-numpy
-mss
+# Versões com cap de MAJOR: permite patches/correções de segurança, mas bloqueia
+# breaking changes de major (ex.: numpy 2→3, opencv 4→5) que quebrariam o app
+# silenciosamente num `pip install` futuro. Limites inferiores = versões verificadas.
+flask>=3.1,<4
+pyautogui>=0.9.54,<1
+keyboard>=0.13,<0.14
+pytesseract>=0.3,<0.4
+Pillow>=12,<13
+pynput>=1.8,<2
+opencv-python>=4.13,<5
+numpy>=2.5,<3
+mss>=10,<11
