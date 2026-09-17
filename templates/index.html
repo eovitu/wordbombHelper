@@ -16,7 +16,10 @@
         <!-- Palavra sugerida -->
         <section class="stage" aria-labelledby="word-heading">
             <div id="word-heading" class="sr-only">Sugestão atual</div>
-            <div id="prompt-line" class="prompt-line"></div>
+            <div class="prompt-summary">
+                <span id="prompt-line" class="prompt-line"></span>
+                <span id="prompt-coverage" class="prompt-coverage" aria-live="polite"></span>
+            </div>
             <div id="word" class="word" aria-live="polite">—</div>
             <p id="ocr-notice" class="notice notice-warning" role="status" hidden></p>
             <div class="reroll" id="reroll-bar" hidden>
@@ -76,6 +79,7 @@
                 <select id="strategy">
                     <option value="random">Aleatória</option>
                     <option value="shortest">Mais curta</option>
+                    <option value="easy">Fácil de digitar</option>
                     <option value="longest">Mais longa</option>
                     <option value="alpha">Alfabética</option>
                     <option value="recover">Recover (cobrir letras)</option>

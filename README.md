@@ -144,9 +144,12 @@ Em teclados 75%, `Insert` pode exigir `Fn`. O botão **Mais curta** executa a me
 | --- | --- |
 | Aleatória | Escolhe entre os candidatos disponíveis. |
 | Mais curta | Prioriza palavras menores. |
+| Fácil de digitar | Prioriza palavras simples, considerando tamanho, pontuação, acentos, letras incomuns e grupos consonantais. |
 | Mais longa | Prioriza palavras maiores. |
 | Alfabética | Usa ordem alfabética. |
 | Recover | Prioriza letras necessárias para recuperar vida. |
+
+Ao lado da sílaba, o helper mostra quantas respostas filtradas e ainda disponíveis existem. Contagens de uma a cinco ficam destacadas para avisar que a cobertura está rara; zero indica que não há resposta nas listas com a configuração atual.
 
 Filtros disponíveis:
 

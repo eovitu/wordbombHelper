@@ -49,7 +49,11 @@ body {
   padding: 40px 20px;
   text-align: center;
 }
-.prompt-line { color: var(--muted); font-size: 13px; letter-spacing: 3px; min-height: 18px; text-transform: uppercase; }
+.prompt-summary { display: flex; align-items: baseline; justify-content: center; gap: 10px; min-height: 18px; }
+.prompt-line { color: var(--muted); font-size: 13px; letter-spacing: 3px; text-transform: uppercase; }
+.prompt-coverage { color: var(--muted); font-size: 11px; letter-spacing: 0; white-space: nowrap; }
+.prompt-coverage.is-rare { color: #fbbf24; }
+.prompt-coverage.is-empty { color: #fca5a5; }
 .word {
   margin-top: 10px;
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;

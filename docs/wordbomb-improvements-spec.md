@@ -6,7 +6,7 @@ Esta especificação reúne as escolhas feitas na conversa de 2026-09-16. O cód
 
 - A tela principal continua voltada a sugestões. Exibir o prompt dentro da palavra com destaque, contador distinto de candidatos e posição da sugestão, aviso visual para OCR incerto e layout compacto opcional.
 - Insert e o botão equivalente procuram a próxima alternativa curta; Ctrl+R continua voltando. A interface apresenta o mapa completo dos atalhos e permite configurá-los quando houver um mecanismo seguro de persistência.
-- A primeira sugestão exibida não deve ser perdida por uma leitura errada do prompt. Uma correção manual descarta a sugestão incorreta e recalcula. Quando o prompt some após um turno válido, a palavra exibida é considerada usada. O usuário pode marcar uma palavra como rejeitada, impedindo seu retorno na partida.
+- A primeira sugestão exibida não deve ser perdida por uma leitura errada do prompt. Uma correção manual descarta a sugestão incorreta e recalcula. O desaparecimento de `SUA VEZ` não confirma acerto: uma palavra verde nova do SOLVE associada ao prompt confirma a palavra efetivamente jogada. Sem essa confirmação, a sugestão e o Recover são preservados. O usuário pode marcar uma palavra como rejeitada, impedindo seu retorno na partida.
 - O Recover exclui K, W e Y. No casual, o alvo por letra é 1 no primeiro ciclo e 2 nos seguintes. No ranqueado é 3, depois 4 e depois 5 permanentemente. Somente palavras efetivamente jogadas ou confirmadas pelo painel SOLVE avançam as metas.
 - A estratégia adaptativa pode alternar respostas mais desafiadoras e rápidas, mas só deve usar um sinal de tempo/pressão validado; em leitura incerta preserva a escolha atual.
 - Reset manual permanece. Reset automático exige sinal confiável de fim de partida ou inatividade suficientemente distinguível de turnos dos oponentes.
@@ -26,7 +26,8 @@ Esta especificação reúne as escolhas feitas na conversa de 2026-09-16. O cód
 
 ## Escopo adiado e restrições
 
-- Estratégia de palavras fáceis com cobertura detalhada (ideias 3 e 5) e busca reversa (ideia 36) ficam para outra fase, conforme a escolha do usuário.
+- A estratégia `Fácil de digitar` ordena por esforço estimado, penalizando pontuação, acentos, letras incomuns e grupos consonantais além do tamanho. Ao lado do prompt, a interface mostra quantas respostas filtradas e ainda disponíveis existem; até cinco respostas, destaca a cobertura rara.
+- A busca reversa (ideia 36) fica para outra fase, conforme a escolha do usuário.
 - Permanecem fora do escopo as ideias rejeitadas: três sugestões simultâneas, favoritos, lista de bloqueio pessoal, explicação de estratégia, sons, estatísticas técnicas de latência e outras rejeições explícitas.
 - Preservar alterações locais em andamento; não fazer commits sem solicitação. Quando houver commit solicitado, omitir `Co-authored-by`. Conferir `requirements.txt` antes e depois de cada recurso que use dependências e testar a instalação final.
 - Escrever testes após implementar cada recurso, como solicitado pelo usuário. Verificar API, seleção, persistência e interface separadamente e executar a suíte completa ao integrar.

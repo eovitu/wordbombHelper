@@ -249,7 +249,7 @@ class WordManager:
         """
         Finds a word containing the prompt string or starting with a prefix.
 
-        strategies: 'random', 'shortest', 'longest', 'hyphen', 'alpha', 'recover'
+        strategies: 'random', 'shortest', 'longest', 'easy', 'hyphen', 'alpha', 'recover'
         """
         with self._lock:
             candidates, is_sublist = self._produce_candidates_locked(
@@ -402,6 +402,36 @@ class WordManager:
 
         return candidates, False
 
+    @staticmethod
+    def _typing_effort(word):
+        """Estimate how hard a word is to recognize and type during a turn."""
+        lowered = word.casefold()
+        decomposed = unicodedata.normalize('NFD', lowered)
+        plain = ''.join(char for char in decomposed
+                        if unicodedata.category(char) != 'Mn')
+        letters = ''.join(char for char in plain if char.isalpha())
+        punctuation = sum(not char.isalnum() for char in lowered)
+        accents = sum(unicodedata.category(char) == 'Mn' for char in decomposed)
+        rare_letters = sum(char in {'k', 'w', 'y'} for char in letters)
+        isolated_q = sum(
+            char == 'q' and (index + 1 >= len(letters) or letters[index + 1] != 'u')
+            for index, char in enumerate(letters)
+        )
+
+        consonant_run = 0
+        cluster_penalty = 0
+        for char in letters:
+            if char in 'aeiou':
+                consonant_run = 0
+            else:
+                consonant_run += 1
+                if consonant_run > 2:
+                    cluster_penalty += 1
+
+        effort = (len(letters) + punctuation * 8 + accents * 2
+                  + rare_letters * 3 + isolated_q * 3 + cluster_penalty * 2)
+        return effort, len(word), plain
+
     def _pick_locked(self, candidates, is_sublist, strategy, exclude_letters, starts_with_letters):
         """Escolhe UMA palavra dentre os candidatos já filtrados. ASSUME lock retido.
         Lógica de estratégia idêntica à versão anterior do get_word."""
@@ -415,6 +445,8 @@ class WordManager:
             candidates.sort(key=len)
             # Pick from the top few to avoid always being the same
             return candidates[0]
+        elif strategy == 'easy':
+            return min(candidates, key=self._typing_effort)
         elif strategy == 'longest':
             candidates.sort(key=len, reverse=True)
             return candidates[0]

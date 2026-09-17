@@ -251,6 +251,17 @@ function updateSuggestionCount(idx, tot) {
   else { el.textContent = ''; bar.hidden = true; }
 }
 
+function updatePromptCoverage(prompt, total) {
+  const el = $('prompt-coverage');
+  if (!el) return;
+  const count = Math.max(0, Number(total) || 0);
+  const visible = Boolean(prompt);
+  el.hidden = !visible;
+  el.classList.toggle('is-empty', visible && count === 0);
+  el.classList.toggle('is-rare', visible && count > 0 && count <= 5);
+  el.textContent = visible ? `${count} ${count === 1 ? 'resposta' : 'respostas'}` : '';
+}
+
 /* ---------- Calibração ---------- */
 async function calibrate(target) {
   try {
@@ -313,7 +324,9 @@ function applyRealtimeUpdate(s) {
   }
 
   // Contador de sugestões (Reroll). SSE usa sidx/stot; o poll usa suggestion_index/total.
-  updateSuggestionCount(s.sidx ?? s.suggestion_index ?? 0, s.stot ?? s.suggestion_total ?? 0);
+  const suggestionTotal = s.stot ?? s.suggestion_total ?? 0;
+  updateSuggestionCount(s.sidx ?? s.suggestion_index ?? 0, suggestionTotal);
+  updatePromptCoverage(preview, suggestionTotal);
   updateSuggestionActions(suggestedWord, s);
   // SSE transporta só o estado do turno. Os metadados de diagnóstico chegam no poll.
   if ('ocr_uncertain' in s) updateOcrState(s, preview);
