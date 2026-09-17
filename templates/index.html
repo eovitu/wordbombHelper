@@ -14,14 +14,27 @@
         </header>
 
         <!-- Palavra sugerida -->
-        <section class="stage">
+        <section class="stage" aria-labelledby="word-heading">
+            <div id="word-heading" class="sr-only">Sugestão atual</div>
             <div id="prompt-line" class="prompt-line"></div>
-            <div id="word" class="word">—</div>
+            <div id="word" class="word" aria-live="polite">—</div>
+            <p id="ocr-notice" class="notice notice-warning" role="status" hidden></p>
             <div class="reroll" id="reroll-bar" hidden>
-                <button class="btn-mini" onclick="rerollPrev()" title="Sugestão anterior (Ctrl+R)">◀</button>
+                <button class="btn-mini" type="button" onclick="rerollPrev()" title="Sugestão anterior (Ctrl+R)">◀ <span class="sr-only">Sugestão anterior</span></button>
                 <span id="suggestion-count" class="suggestion-count"></span>
-                <button class="btn-mini" onclick="rerollNext()" title="Próxima sugestão (Shift+R)">🔄</button>
+                <button class="btn-mini" type="button" onclick="rerollNext()" title="Próxima sugestão">Próxima ▶</button>
             </div>
+            <div class="suggestion-actions" id="suggestion-actions" hidden>
+                <button id="btn-short" class="btn-mini" type="button" onclick="rerollShort()">Mais curta <kbd>Insert</kbd></button>
+                <button id="btn-reject" class="btn-mini btn-reject" type="button" onclick="rejectWord()">Remover do dicionário <kbd>Delete</kbd></button>
+            </div>
+            <form id="prompt-correction" class="prompt-correction" hidden>
+                <label for="corrected-prompt">Corrigir sílaba lida</label>
+                <div class="row">
+                    <input id="corrected-prompt" name="prompt" type="text" autocomplete="off" maxlength="24" spellcheck="false" placeholder="ex.: ção">
+                    <button class="btn-mini" type="submit">Usar</button>
+                </div>
+            </form>
         </section>
 
         <!-- Controles -->
@@ -29,7 +42,10 @@
             <button id="btn-toggle" class="btn btn-go" onclick="toggleAuto()">▶ Iniciar</button>
             <button class="btn" onclick="calibrate()">Calibrar</button>
             <button class="btn btn-ghost" onclick="resetWords()" title="Esquece palavras usadas (nova partida)">Reset</button>
+            <button id="btn-compact" class="btn btn-ghost" type="button" aria-pressed="false" onclick="toggleCompact()">Tela compacta</button>
+            <button class="btn btn-ghost" type="button" onclick="openFloatingWindow()">Janela flutuante</button>
         </section>
+        <p id="reset-notice" class="notice" role="status" hidden></p>
         <section class="controls">
             <button class="btn btn-ghost" onclick="calibrate('solve')" title="Calibre a área do painel SOLVE da extensão para aprender palavras já jogadas">Calibrar painel SOLVE</button>
             <span id="learned-badge" class="learned-badge" title="Palavras já jogadas aprendidas dos outros (Pipeline B)"></span>
@@ -61,9 +77,13 @@
             <div class="field" id="recover-field" hidden>
                 <label>Recover</label>
                 <div class="row">
-                    <input id="r-target" type="number" min="1" max="10" value="2" title="Alvo por letra">
+                    <select id="recover-mode" aria-label="Modo Recover">
+                        <option value="casual">Casual</option>
+                        <option value="ranked">Ranked</option>
+                    </select>
                     <input id="r-exclude" type="text" placeholder="excluir: w, z" title="Letras a ignorar">
                 </div>
+                <p id="recover-progress" class="field-help" hidden></p>
             </div>
 
             <div class="field">
@@ -83,6 +103,96 @@
             </div>
         </section>
 
+        <details class="shortcuts">
+            <summary>Atalhos</summary>
+            <dl>
+                <div><dt>Insert</dt><dd>buscar sugestão mais curta</dd></div>
+                <div><dt>Ctrl + R</dt><dd>voltar uma sugestão</dd></div>
+                <div><dt>Delete</dt><dd>remover permanentemente a palavra atual</dd></div>
+            </dl>
+        </details>
+
+        <details class="match-summary" id="match-summary-panel">
+            <summary>Resumo da partida</summary>
+            <div id="match-summary" class="summary-grid" aria-live="polite"></div>
+            <p id="last-match-summary" class="field-help" hidden></p>
+        </details>
+
+        <details class="dictionary" id="dictionary-panel">
+            <summary>Manutenção do dicionário</summary>
+            <p class="field-help">Lista pessoal de <strong id="dictionary-language">Português</strong>.</p>
+            <form id="dictionary-add-form" class="dictionary-add">
+                <label for="dictionary-word">Adicionar palavra</label>
+                <div class="row">
+                    <input id="dictionary-word" type="text" autocomplete="off" placeholder="uma ou várias palavras separadas por espaço">
+                    <button class="btn-mini" type="submit">Adicionar</button>
+                </div>
+            </form>
+            <div id="dictionary-message" class="field-help" role="status"></div>
+            <div id="dictionary-list" class="dictionary-list" aria-live="polite"></div>
+            <form id="dictionary-import-form" class="dictionary-import">
+                <label for="dictionary-import-text">Importar palavras</label>
+                <textarea id="dictionary-import-text" rows="5" spellcheck="false" placeholder="separe palavras por espaço ou linha"></textarea>
+                <div class="row">
+                    <button class="btn-mini" type="submit">Pré-visualizar</button>
+                    <button id="dictionary-apply-import" class="btn-mini" type="button" disabled>Aplicar importação</button>
+                    <button id="dictionary-undo" class="btn-mini" type="button">Desfazer última alteração</button>
+                </div>
+            </form>
+        </details>
+
+        <details class="diagnostics" id="diagnostics-panel">
+            <summary>Diagnóstico OCR e calibração</summary>
+            <section class="diagnostic-section" aria-labelledby="ocr-diagnostic-title">
+                <h2 id="ocr-diagnostic-title">Última leitura OCR</h2>
+                <img id="ocr-preview" class="ocr-preview" alt="Ainda não há uma imagem OCR para pré-visualizar." hidden>
+                <div class="row diagnostic-actions">
+                    <button id="ocr-preview-refresh" class="btn-mini" type="button">Atualizar imagem</button>
+                    <button id="ocr-replay" class="btn-mini" type="button">Reprocessar leitura</button>
+                </div>
+                <p id="ocr-diagnostic-result" class="field-help" role="status"></p>
+            </section>
+            <section class="diagnostic-section" aria-labelledby="profile-title">
+                <h2 id="profile-title">Perfis de calibração</h2>
+                <form id="profile-save-form" class="dictionary-add">
+                    <label for="profile-name">Salvar a região atual como</label>
+                    <div class="row">
+                        <input id="profile-name" type="text" maxlength="60" autocomplete="off" placeholder="Monitor principal">
+                        <button class="btn-mini" type="submit">Salvar</button>
+                    </div>
+                </form>
+                <div id="profile-message" class="field-help" role="status"></div>
+                <div id="profile-list" class="profile-list" aria-live="polite"></div>
+            </section>
+        </details>
+
+        <details class="practice" id="practice-panel">
+            <summary>Treino offline</summary>
+            <p class="field-help">Exercite sugestões sem alterar a partida observada.</p>
+            <fieldset class="practice-modes">
+                <legend>Modo</legend>
+                <label><input type="radio" name="practice-mode" value="normal" checked> Normal</label>
+                <label><input type="radio" name="practice-mode" value="hints"> Com dicas</label>
+            </fieldset>
+            <button id="practice-new" class="btn-mini" type="button">Nova rodada</button>
+            <div id="practice-round" class="practice-round" hidden>
+                <p id="practice-prompt" class="practice-prompt" aria-live="polite"></p>
+                <form id="practice-check-form" class="dictionary-add">
+                    <label for="practice-answer">Sua palavra</label>
+                    <div class="row">
+                        <input id="practice-answer" type="text" autocomplete="off" spellcheck="false" maxlength="80">
+                        <button class="btn-mini" type="submit">Conferir</button>
+                    </div>
+                </form>
+                <div class="practice-hints" id="practice-hints">
+                    <button class="btn-mini" type="button" data-hint="length">Tamanho</button>
+                    <button class="btn-mini" type="button" data-hint="first_letter">Primeira letra</button>
+                    <button class="btn-mini btn-reject" type="button" data-hint="answer">Mostrar resposta</button>
+                </div>
+            </div>
+            <p id="practice-result" class="field-help" role="status"></p>
+        </details>
+
         <!-- Log -->
         <section class="log" id="log"></section>
 
@@ -93,6 +203,7 @@
         <!-- Prompts confirmados sem palavra no dicionário (manutenção; persiste entre execuções) -->
         <div class="log-label">Prompts sem palavra (faltando no dicionário)
             <button class="btn-mini" onclick="exportMissing()" title="Baixar TXT (um prompt por linha)">Export TXT</button>
+            <button class="btn-mini" onclick="clearMissing()" title="Limpar a lista (use depois de adicionar as palavras ao dicionário)">Limpar</button>
         </div>
         <section class="log log-missing" id="missing-log"></section>
 
