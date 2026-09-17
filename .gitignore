@@ -28,11 +28,18 @@ logs/
 debug_screenshots/
 
 # ── Estado de runtime / persistência gerada ──────────────
-calibration_region.json      # região de calibração (Pipeline A)
-solve_region.json            # região do painel SOLVE (Pipeline B)
-presets.json                 # presets do usuário
-missing_prompts.json         # manutenção: prompts sem palavra
-ambiguous_ocr.json           # manutenção: leituras OCR ambíguas
+# (comentários em linha própria — git NÃO aceita comentário no fim do padrão,
+#  o que antes fazia estes 5 arquivos NÃO serem ignorados de fato)
+# região de calibração (Pipeline A) e do painel SOLVE (Pipeline B)
+calibration_region.json
+solve_region.json
+calibration_profiles.json
+# presets do usuário
+presets.json
+# manutenção: prompts sem palavra e leituras OCR ambíguas
+missing_prompts.json
+ambiguous_ocr.json
+personal_wordlists/
 
 # ── Exports gerados ──────────────────────────────────────
 missing_prompts.txt
@@ -42,3 +49,4 @@ ambiguous_ocr.txt
 tmp/
 *.tmp
 .artifacts/
+artifacts/
