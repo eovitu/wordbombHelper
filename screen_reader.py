@@ -458,7 +458,9 @@ class ScreenReader:
         ax, ay, aw, ah, _ = min(anchors, key=lambda item: (item[1], -item[3]))
         max_gap = max(4, int(ah * 0.35))
         for x, y, width, height, area in components:
-            if height >= ah * 0.6 or width > ah * 0.6 or area < 4:
+            # O apóstrofo é um traço curto e vertical; hífens são mais largos
+            # que altos e não podem disparar essa recuperação.
+            if height >= ah * 0.6 or height < width or width > ah * 0.6 or area < 4:
                 continue
             gap = ax - (x + width)
             if 0 <= gap <= max_gap and abs((y + height * 0.5) - (ay + ah * 0.5)) <= ah * 0.5:

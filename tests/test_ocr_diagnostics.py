@@ -150,6 +150,13 @@ class TestLeadingApostropheRecovery(unittest.TestCase):
 
         self.assertFalse(ScreenReader._has_leading_apostrophe_component(mask, 35))
 
+    def test_does_not_mistake_a_leading_hyphen_for_an_apostrophe(self):
+        mask = np.zeros((80, 160), dtype=np.uint8)
+        mask[35:45, 20:42] = 255  # hífen horizontal
+        mask[12:60, 50:76] = 255  # letra alta do prompt
+
+        self.assertFalse(ScreenReader._has_leading_apostrophe_component(mask, 35))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
