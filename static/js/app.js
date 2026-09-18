@@ -270,7 +270,7 @@ async function calibrate(target) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: target || 'turn' }),
     })).json();
-    if (r.status === 'started') showOverlay(r.message || 'Clique no canto superior-esquerdo');
+    if (r.status === 'started') showOverlay((r.message || 'Clique no canto superior-esquerdo') + ' — se o clique não for detectado, posicione o cursor e aperte F8.');
   } catch {}
 }
 function showOverlay(msg) { $('overlay-text').textContent = msg; $('overlay').hidden = false; }
@@ -819,8 +819,8 @@ async function poll() {
     wasCalibrating = true;
     const step = s.calibration_step;
     const alvo = s.calib_target === 'solve' ? 'painel SOLVE' : 'prompt + SUA VEZ';
-    showOverlay(step === 'turn_start' ? `Clique no canto SUPERIOR-ESQUERDO (${alvo})`
-              : step === 'turn_end' ? 'Clique no canto INFERIOR-DIREITO'
+    showOverlay(step === 'turn_start' ? `Clique no canto SUPERIOR-ESQUERDO (${alvo}) ou posicione o cursor e aperte F8`
+              : step === 'turn_end' ? 'Clique no canto INFERIOR-DIREITO ou posicione o cursor e aperte F8'
               : 'Clique para calibrar');
   } else if (wasCalibrating) {
     wasCalibrating = false;

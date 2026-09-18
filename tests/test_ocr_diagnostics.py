@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 
+import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -97,7 +98,9 @@ class TestOcrDiagnostics(unittest.TestCase):
 
     def test_manual_override_rejects_empty_or_out_of_range_prompt(self):
         with self.assertRaises(ValueError):
-            self.reader.override_prompt("x")
+            self.reader.override_prompt("")
+        with self.assertRaises(ValueError):
+            self.reader.override_prompt("abcdefg")
 
     def test_manual_correction_ignores_old_ocr_then_releases_for_next_stable_prompt(self):
         found = []
@@ -116,6 +119,36 @@ class TestOcrDiagnostics(unittest.TestCase):
         self.assertEqual(found, ["ad"])
         self.assertEqual(self.reader.last_suggested_prompt, "ad")
         self.assertIsNone(self.reader.get_state()["manual_prompt_override"])
+
+
+class TestOcrMaskScaling(unittest.TestCase):
+    def test_preserves_tiny_leading_apostrophe_without_blurring_it_into_letters(self):
+        # A pequena marca à esquerda representa o apóstrofo de prompts como 'AL.
+        mask = np.zeros((20, 42), dtype=np.uint8)
+        mask[3:8, 3:6] = 255
+        mask[3:16, 10:20] = 255
+
+        scaled = ScreenReader._scale_mask_for_ocr(mask, 2.0)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(scaled)
+
+        self.assertEqual(count, 3)
+        self.assertIn([6, 6, 6, 10, 60], stats.tolist())
+        self.assertIn([20, 6, 20, 26, 520], stats.tolist())
+
+
+class TestLeadingApostropheRecovery(unittest.TestCase):
+    def test_detects_a_small_mark_immediately_left_of_a_prompt_letter(self):
+        mask = np.zeros((80, 160), dtype=np.uint8)
+        mask[12:30, 20:30] = 255  # apóstrofo
+        mask[12:60, 38:64] = 255  # letra alta do prompt
+
+        self.assertTrue(ScreenReader._has_leading_apostrophe_component(mask, 35))
+
+    def test_does_not_infer_an_apostrophe_when_the_prompt_has_only_letters(self):
+        mask = np.zeros((80, 160), dtype=np.uint8)
+        mask[12:60, 38:64] = 255
+
+        self.assertFalse(ScreenReader._has_leading_apostrophe_component(mask, 35))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from screen_reader import ScreenReader  # noqa: E402
 
-MIN_H, MIN_LEN, MAX_LEN = 35, 2, 6
+MIN_H, MIN_LEN, MAX_LEN = 35, 1, 6
 UI = {"SUA", "VEZ", "SUAVEZ", "YOUR", "TURN", "YOURTURN"}
 
 
@@ -34,6 +34,10 @@ class TestCollapseApostropheDups(unittest.TestCase):
 
 
 class TestPromptAssembly(unittest.TestCase):
+    def test_single_letter_prompt_is_accepted(self):
+        cand, _ = sel([("I", 88, 40, 100, 200)])
+        self.assertEqual(cand, "i")
+
     def test_plain_single_token_unchanged(self):
         # Caso comum: prompt simples 'nfl' lido como 1 token → inalterado.
         cand, conf = sel([("NFL", 88, 60, 100, 200)])

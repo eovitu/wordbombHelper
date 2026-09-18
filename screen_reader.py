@@ -66,6 +66,9 @@ class ScreenReader:
         self.status = "Idle"
         self.calibration_step = None
         self.temp_points = []
+        # O listener de mouse e o atalho de fallback podem chegar de threads
+        # diferentes; os dois pontos precisam ser processados em ordem.
+        self._calibration_lock = threading.Lock()
 
         self.thread = None
         self.stop_event = threading.Event()
@@ -97,7 +100,7 @@ class ScreenReader:
         self.min_white_pixels = 40
 
         # Tamanho aceitável da sílaba (prompt).
-        self.min_prompt_len = 2
+        self.min_prompt_len = 1
         self.max_prompt_len = 6  # até 6 para prompts com hífen/apóstrofe (ex: m-v, pa'u)
 
         # Altura mínima (px) do token na imagem escalada para ser candidato a prompt.
@@ -432,6 +435,36 @@ class ScreenReader:
             s = s.replace(ch, "'")
         return "".join(ch for ch in s if ch.isalpha() or ch in "-'").upper()
 
+    @staticmethod
+    def _scale_mask_for_ocr(mask, scale):
+        """Amplia a máscara binária sem apagar pontuação de um ou poucos pixels."""
+        if scale <= 1.01:
+            return mask
+        return cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+
+    @staticmethod
+    def _has_leading_apostrophe_component(mask, min_height):
+        """Detecta o pequeno glifo antes da primeira letra de um prompt como 'I.
+
+        Em alguns frames o Tesseract incorpora o glifo ao bounding box da letra
+        seguinte e devolve apenas a letra. A detecção é limitada à mesma linha e
+        exige um componente bem menor, separado e à esquerda da letra alta.
+        """
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        components = [tuple(row) for row in stats[1:] if row[4] > 0]
+        anchors = [item for item in components if item[3] >= min_height]
+        if not anchors:
+            return False
+        ax, ay, aw, ah, _ = min(anchors, key=lambda item: (item[1], -item[3]))
+        max_gap = max(4, int(ah * 0.35))
+        for x, y, width, height, area in components:
+            if height >= ah * 0.6 or width > ah * 0.6 or area < 4:
+                continue
+            gap = ax - (x + width)
+            if 0 <= gap <= max_gap and abs((y + height * 0.5) - (ay + ah * 0.5)) <= ah * 0.5:
+                return True
+        return False
+
     def _ensure_warm_ocr(self):
         """Inicializa o engine in-process na 1ª chamada. Idempotente e thread-safe."""
         if self._warm_ocr_tried:
@@ -587,6 +620,10 @@ class ScreenReader:
         best_candidate, best_confidence = self._select_prompt_from_tokens(
             clean_tokens, self.min_prompt_height, self.min_prompt_len,
             self.max_prompt_len, self._UI_KEYWORDS)
+        if (best_candidate and not best_candidate.startswith("'")
+                and self._has_leading_apostrophe_component(
+                    cv2.bitwise_not(gray_img), self.min_prompt_height)):
+            best_candidate = "'" + best_candidate
 
         if self._prompt_trace:
             logger.info("TRACE OCR_RAW=%s | min_h=%d | ASSEMBLED=%r conf=%.1f",
@@ -668,14 +705,10 @@ class ScreenReader:
         max_w = self.ocr_max_width if self._turn_confirm_streak >= 1 else self.ocr_max_width_keyword
         scale = min(2.0, max_w / w0) if w0 > 0 else 2.0
         scale = max(1.0, scale)
-        if scale > 1.01:
-            img_large = cv2.resize(img_bgr, (int(w0 * scale), int(h0 * scale)), interpolation=cv2.INTER_LINEAR)
-        else:
-            img_large = img_bgr
-
-        # Isola texto branco → imagem binária preto-no-branco para o Tesseract.
-        hsv_full = cv2.cvtColor(img_large, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv_full, lower_white, upper_white)
+        # Isola o texto ANTES de ampliar. INTER_LINEAR borrava apóstrofes pequenos
+        # (por exemplo, 'AL) e fazia o Tesseract descartá-los.
+        mask = cv2.inRange(hsv_small, lower_white, upper_white)
+        mask = self._scale_mask_for_ocr(mask, scale)
         _, proc = cv2.threshold(cv2.bitwise_not(mask), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         if self.save_debug_screenshots:
@@ -694,7 +727,7 @@ class ScreenReader:
             self._first_ocr_done = True
             engine = "in-process(ctypes)" if self._warm_ocr is not None else "subprocess(pytesseract)"
             logger.info("Primeiro OCR: %.0fms | img=%dx%d | engine=%s",
-                        ocr_ms, img_large.shape[1], img_large.shape[0], engine)
+                        ocr_ms, proc.shape[1], proc.shape[0], engine)
             if self._warm_ocr is None and ocr_ms > 600:
                 logger.warning(
                     "OCR lento (%.0fms) via subprocess — engine in-process não carregou. "
@@ -959,7 +992,30 @@ class ScreenReader:
         if result["status"] == "done":
             self.stop_calibration()
 
+    def capture_calibration_at_cursor(self):
+        """Use the current cursor position as a calibration point.
+
+        This fallback is useful when the global mouse-click listener does not
+        receive touchpad or USB mouse events but the keyboard hook does.
+        """
+        try:
+            x, y = mouse.Controller().position
+        except Exception as exc:
+            logger.warning("Could not read cursor position for calibration: %s", exc)
+            return {"status": "error", "message": "Could not read cursor position"}
+
+        result = self.handle_calibration_click(x, y)
+        logger.info("Calibration point captured by shortcut at (%d, %d): %s", x, y, result)
+        if result.get("status") == "done":
+            self.stop_calibration()
+        return result
+
     def handle_calibration_click(self, x, y):
+        """Process one calibration point without allowing concurrent point races."""
+        with self._calibration_lock:
+            return self._handle_calibration_click(x, y)
+
+    def _handle_calibration_click(self, x, y):
         if self.status != "Calibrating":
             return {"status": "error", "message": "Não está em modo de calibração"}
         try:

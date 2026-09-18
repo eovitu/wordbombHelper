@@ -22897,7 +22897,6 @@ apressemos
 apresses
 apresso
 apressou
-aprim
 aprimora
 aprimorado
 aprimorai
@@ -38108,8 +38107,6 @@ bentinhos
 bento
 bento-abreuense
 bento-abreuenses
-bento-fernandense
-bento-fernandenses
 bentos
 benza
 benzais
@@ -140821,9 +140818,11 @@ hilbert
 himalaia
 himedanshi
 himejoshi
-himen
-himenais
-himenal
+HIMEN
+HIMENAIS
+HIMENAL
+HIMENIAIS
+HIMENIAL
 hinario
 hinarios
 hindu
@@ -141200,7 +141199,6 @@ hitlerismo
 hitlerismos
 hitlerista
 hitleristas
-hiv
 hixkaryana
 hixkaryanas
 hjelmsleviana
@@ -181643,6 +181641,10 @@ penavamos
 penavas
 penaveis
 penca
+PENCUDA
+PENCUDAS
+PENCUDO
+PENCUDOS
 pencas
 penda
 pendais

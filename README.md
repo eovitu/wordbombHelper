@@ -1,5 +1,9 @@
 # WordBomb Helper
-
+## PowerShell admin
+```
+cd "C:\Users\falso\Documents\codigos mirabulantes\wordbombHelper"
+& "C:\Users\falso\AppData\Local\Programs\Python\Python313\python.exe" main.py
+```
 Aplicação local que observa uma partida de WordBomb, reconhece o prompt por OCR e mostra uma palavra válida para você digitar. Também acompanha palavras usadas, mantém um dicionário pessoal, oferece treino offline e ferramentas para revisar o OCR.
 
 O helper roda somente no seu computador. Não exige conta, banco de dados, serviço remoto nem instalação do frontend.

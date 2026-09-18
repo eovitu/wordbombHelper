@@ -25,11 +25,13 @@ from used_word_scanner import UsedWordScanner, OcrSolvePanelSource
 logger = logging.getLogger(__name__)
 
 
-def register_global_hotkeys(keyboard_module, word_service):
+def register_global_hotkeys(keyboard_module, word_service, screen_reader=None):
     """Registra somente teclas que não fazem parte da digitação de palavras."""
     keyboard_module.add_hotkey("insert", word_service.reroll_short, suppress=True)
     keyboard_module.add_hotkey("ctrl+r", word_service.reroll_prev, suppress=True)
     keyboard_module.add_hotkey("delete", word_service.reject_current, suppress=True)
+    if screen_reader is not None:
+        keyboard_module.add_hotkey("f8", screen_reader.capture_calibration_at_cursor, suppress=True)
 
 
 @dataclass
@@ -106,7 +108,7 @@ def create_app():
     # Só navega a sessão; não marca nada, não toca OCR/Pipeline B.
     try:
         import keyboard
-        register_global_hotkeys(keyboard, word_service)
+        register_global_hotkeys(keyboard, word_service, screen_reader)
         logger.info("Hotkeys ativos (Insert = mais curta, Ctrl+R = anterior, Delete = rejeitar)")
     except Exception as exc:
         logger.warning("Hotkeys de reroll indisponíveis (%s) — use os botões da interface", exc)
